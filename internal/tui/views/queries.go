@@ -190,13 +190,8 @@ func (v *Queries) render() {
 		}
 		v.table.SetCell(row, 5, durCell)
 
-		stmtCount := "1"
-		if v.queryHistory != nil {
-			if entries := v.queryHistory.Get(q.PID); len(entries) > 0 {
-				stmtCount = fmt.Sprintf("%d", len(entries))
-			}
-		}
-		v.table.SetCell(row, 6, tview.NewTableCell(stmtCount).SetTextColor(color))
+		stmtCount := countStatements(q.Query)
+		v.table.SetCell(row, 6, tview.NewTableCell(fmt.Sprintf("%d", stmtCount)).SetTextColor(color))
 		row++
 	}
 

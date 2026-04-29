@@ -95,6 +95,21 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
+// countStatements counts the number of SQL statements in a query string
+// by splitting on semicolons and filtering out empty/whitespace-only parts.
+func countStatements(query string) int {
+	count := 0
+	for _, s := range strings.Split(query, ";") {
+		if strings.TrimSpace(s) != "" {
+			count++
+		}
+	}
+	if count == 0 {
+		count = 1
+	}
+	return count
+}
+
 // boolIcon returns a check or cross mark for a boolean.
 func boolIcon(b bool) string {
 	if b {
