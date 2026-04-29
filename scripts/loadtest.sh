@@ -2,18 +2,24 @@
 # Simulates realistic Postgres load for Tusk development.
 # Usage: ./scripts/loadtest.sh [duration_seconds]
 #
-# Spawns concurrent background processes that create:
-# - Fast OLTP queries (high QPS)
-# - Slow analytical queries
-# - Idle-in-transaction connections
-# - Lock contention scenarios
-# - Dead tuple churn (for vacuum stats)
-# - Multiple application_name sources (for connection grouping)
+# Creates diverse states visible in Tusk:
+# - Fast OLTP (high TPS)
+# - Slow analytics (long-running queries)
+# - Idle-in-transaction (the bad pattern — visible in :txn)
+# - Multi-statement transactions with different txn/query ages
+# - Lock contention (visible in :locks)
+# - Deadlock attempts
+# - Dead tuple churn (visible in :tables dead%)
+# - Multiple users (visible in :roles, :connections)
+# - SQLcommentor metadata (visible in query detail)
+# - Prepared statements
+# - Temp table usage
+# - Sequential scans on large tables (visible in :tables seq/idx)
 
 set -euo pipefail
 
 DB="postgres://postgres:postgres@localhost:5432/tuskdev?sslmode=disable"
-DURATION=${1:-60}
+DURATION=${1:-120}
 PIDS=()
 
 cleanup() {
@@ -41,128 +47,166 @@ echo "Duration: ${DURATION}s"
 echo "Target:   $DB"
 echo ""
 
-# ── 1. Fast OLTP reads (high QPS) ────────────────────────────
-echo "[+] Starting OLTP readers (3 workers)..."
-for i in 1 2 3; do
+# ── 1. Fast OLTP reads — different app names for connection variety ──
+echo "[+] OLTP readers (3 workers, different apps)..."
+for app in checkout-service user-service product-service; do
     (
-        export PGAPPNAME="oltp-reader-$i"
         run_until "$END" psql "$DB" -c "
-            SET application_name = '$PGAPPNAME';
+            SET application_name = '$app';
             SELECT * FROM app.users WHERE id = (random()*4+1)::int;
-            SELECT * FROM app.products WHERE id = (random()*4+1)::int;
-            SELECT o.id, o.total_cents, o.status FROM app.orders o
-                JOIN app.users u ON u.id = o.user_id
-                WHERE u.id = (random()*4+1)::int;
         " > /dev/null
     ) &
     PIDS+=($!)
 done
 
-# ── 2. Fast OLTP writes ──────────────────────────────────────
-echo "[+] Starting OLTP writers (2 workers)..."
-for i in 1 2; do
+# ── 2. OLTP writes — generates TPS and dead tuples ──────────────────
+echo "[+] OLTP writers (2 workers)..."
+for app in order-processor event-ingester; do
     (
-        export PGAPPNAME="oltp-writer-$i"
         run_until "$END" psql "$DB" -c "
-            SET application_name = '$PGAPPNAME';
+            SET application_name = '$app';
             INSERT INTO analytics.events (event_type, user_id, payload)
             VALUES (
-                (ARRAY['page_view','click','purchase','signup'])[1+(random()*3)::int],
+                (ARRAY['page_view','click','purchase','signup','logout'])[1+(random()*4)::int],
                 (random()*4+1)::int,
-                jsonb_build_object('ts', now(), 'src', 'loadtest')
+                jsonb_build_object('ts', now(), 'src', '$app', 'session', gen_random_uuid())
             );
         " > /dev/null
     ) &
     PIDS+=($!)
 done
 
-# ── 3. Slow analytical queries (show up as long-running) ─────
-echo "[+] Starting analytical queries..."
+# ── 3. Slow analytics — visible as yellow/red duration ───────────────
+echo "[+] Slow analytical queries..."
 (
     run_until "$END" psql "$DB" -c "
-        SET application_name = 'analytics-worker';
-        SELECT pg_sleep(0.5);
+        SET application_name = 'analytics-dashboard';
         SELECT event_type, count(*), avg(EXTRACT(EPOCH FROM created_at))
         FROM analytics.events
         GROUP BY event_type;
+        SELECT pg_sleep(2);
     " > /dev/null
-    sleep 2
 ) &
 PIDS+=($!)
 
 (
     run_until "$END" psql "$DB" -c "
         SET application_name = 'report-builder';
-        SELECT pg_sleep(1);
         SELECT u.name, count(o.id), sum(o.total_cents)
         FROM app.users u
         JOIN app.orders o ON o.user_id = u.id
         JOIN app.order_items oi ON oi.order_id = o.id
         JOIN app.products p ON p.id = oi.product_id
         GROUP BY u.name;
+        SELECT pg_sleep(3);
     " > /dev/null
-    sleep 3
 ) &
 PIDS+=($!)
 
-# ── 4. Really slow query (always visible in dashboard) ───────
-echo "[+] Starting slow query generator..."
+# ── 4. Very slow query (always red, >30s) ────────────────────────────
+echo "[+] Very slow batch job (>30s, always red)..."
 (
     run_until "$END" psql "$DB" -c "
-        SET application_name = 'batch-processor';
-        SELECT pg_sleep(5);
-        SELECT path, count(*), avg(duration_ms)::int
-        FROM analytics.page_views
-        GROUP BY path
-        ORDER BY count(*) DESC;
+        SET application_name = 'nightly-batch';
+        SELECT pg_sleep(45);
     " > /dev/null
-    sleep 1
 ) &
 PIDS+=($!)
 
-# ── 5. Idle-in-transaction (the bad pattern!) ─────────────────
-echo "[+] Starting idle-in-transaction connections (2)..."
-for i in 1 2; do
-    (
-        psql "$DB" -c "
-            SET application_name = 'leaky-service-$i';
-            BEGIN;
-            SELECT * FROM app.users LIMIT 1;
-            SELECT pg_sleep($DURATION);
-            ROLLBACK;
-        " > /dev/null 2>&1 || true
-    ) &
-    PIDS+=($!)
-done
-
-# ── 6. Lock contention ───────────────────────────────────────
-echo "[+] Starting lock contention scenario..."
+# ── 5. Idle-in-transaction — the classic leak pattern ─────────────────
+# These show different txn age vs query age because the txn started
+# before the pg_sleep query.
+echo "[+] Idle-in-transaction connections (3 — different ages)..."
 (
-    # Holder: locks a row for a while
+    psql "$DB" <<SQL > /dev/null 2>&1 || true
+SET application_name = 'leaky-service-1';
+BEGIN;
+SELECT * FROM app.users LIMIT 1;
+SELECT pg_sleep($DURATION);
+ROLLBACK;
+SQL
+) &
+PIDS+=($!)
+
+sleep 5
+
+(
+    psql "$DB" <<SQL > /dev/null 2>&1 || true
+SET application_name = 'leaky-service-2';
+BEGIN;
+UPDATE app.products SET inventory = inventory WHERE id = 2;
+SELECT pg_sleep($DURATION);
+ROLLBACK;
+SQL
+) &
+PIDS+=($!)
+
+sleep 5
+
+(
+    psql "$DB" <<SQL > /dev/null 2>&1 || true
+SET application_name = 'leaky-service-3';
+BEGIN;
+INSERT INTO analytics.events (event_type, user_id) VALUES ('abandoned_txn', 1);
+SELECT pg_sleep($DURATION);
+ROLLBACK;
+SQL
+) &
+PIDS+=($!)
+
+# ── 6. Multi-statement transaction — txn age != query age ────────────
+echo "[+] Multi-statement transactions..."
+(
+    run_until "$END" psql "$DB" <<SQL > /dev/null 2>&1
+SET application_name = 'order-workflow';
+BEGIN;
+UPDATE app.orders SET status = 'processing' WHERE id = (random()*7+1)::int;
+SELECT pg_sleep(2);
+UPDATE app.orders SET status = 'completed' WHERE id = (random()*7+1)::int;
+SELECT pg_sleep(1);
+INSERT INTO analytics.events (event_type, user_id, payload)
+    VALUES ('order_complete', (random()*4+1)::int, '{"step": "final"}');
+COMMIT;
+SQL
+) &
+PIDS+=($!)
+
+# ── 7. Lock contention — visible in :locks ────────────────────────────
+echo "[+] Lock contention (holder + 2 waiters)..."
+(
     run_until "$END" psql "$DB" -c "
         SET application_name = 'lock-holder';
         BEGIN;
         UPDATE app.products SET inventory = inventory WHERE id = 1;
-        SELECT pg_sleep(3);
+        SELECT pg_sleep(5);
         COMMIT;
     " > /dev/null
     sleep 1
 ) &
 PIDS+=($!)
 
+sleep 1
 (
-    sleep 1  # let the holder grab the lock first
-    # Waiter: tries to update the same row
     run_until "$END" psql "$DB" -c "
-        SET application_name = 'lock-waiter';
+        SET application_name = 'lock-waiter-1';
         UPDATE app.products SET inventory = inventory WHERE id = 1;
     " > /dev/null
     sleep 1
 ) &
 PIDS+=($!)
 
-# ── 7. Dead tuple generator (for vacuum stats) ───────────────
-echo "[+] Starting dead tuple churn..."
+sleep 1
+(
+    run_until "$END" psql "$DB" -c "
+        SET application_name = 'lock-waiter-2';
+        UPDATE app.products SET inventory = inventory WHERE id = 1;
+    " > /dev/null
+    sleep 1
+) &
+PIDS+=($!)
+
+# ── 8. Dead tuple churn — visible in :tables dead% column ─────────────
+echo "[+] Dead tuple generator..."
 (
     run_until "$END" psql "$DB" -c "
         SET application_name = 'data-churn';
@@ -170,27 +214,86 @@ echo "[+] Starting dead tuple churn..."
         SET duration_ms = duration_ms + 1
         WHERE id IN (
             SELECT id FROM analytics.page_views
-            ORDER BY random() LIMIT 500
+            ORDER BY random() LIMIT 2000
         );
     " > /dev/null
-    sleep 2
+    sleep 3
 ) &
 PIDS+=($!)
 
-# ── 8. SQLcommentor-style queries (for future parsing) ───────
-echo "[+] Starting sqlcommentor queries..."
+# ── 9. Sequential scan torture — visible in :tables seq/idx ratio ─────
+echo "[+] Sequential scan queries (no index usage)..."
+(
+    run_until "$END" psql "$DB" -c "
+        SET application_name = 'bad-query-pattern';
+        SELECT * FROM analytics.page_views WHERE duration_ms > (random()*30000)::int;
+        SELECT * FROM analytics.events WHERE payload->>'src' = 'loadtest';
+    " > /dev/null
+    sleep 1
+) &
+PIDS+=($!)
+
+# ── 10. Different users — visible in :roles, :connections ─────────────
+echo "[+] Queries from different roles..."
+(
+    run_until "$END" psql "postgres://app_user:apppass@localhost:5432/tuskdev?sslmode=disable" -c "
+        SET application_name = 'app-backend';
+        SELECT * FROM app.users;
+        SELECT * FROM app.orders WHERE status = 'pending';
+    " > /dev/null 2>&1
+    sleep 1
+) &
+PIDS+=($!)
+
+(
+    run_until "$END" psql "postgres://readonly_user:readonly@localhost:5432/tuskdev?sslmode=disable" -c "
+        SET application_name = 'readonly-dashboard';
+        SELECT count(*) FROM app.orders;
+        SELECT count(*) FROM analytics.events;
+    " > /dev/null 2>&1
+    sleep 1
+) &
+PIDS+=($!)
+
+# ── 11. SQLcommentor queries — visible in query detail ────────────────
+echo "[+] SQLcommentor-annotated queries..."
 (
     run_until "$END" psql "$DB" -c "
         SET application_name = 'web-api';
         SELECT * FROM app.users WHERE id = 1
         /*app='user-service',route='/api/v1/users',controller='UserController',action='show'*/;
+        SELECT pg_sleep(0.5);
+    " > /dev/null
+) &
+PIDS+=($!)
+
+(
+    run_until "$END" psql "$DB" -c "
+        SET application_name = 'web-api';
+        SELECT o.*, u.name FROM app.orders o JOIN app.users u ON u.id = o.user_id WHERE o.id = (random()*7+1)::int
+        /*app='order-service',route='/api/v1/orders/:id',controller='OrderController',action='show'*/;
         SELECT pg_sleep(0.3);
     " > /dev/null
 ) &
 PIDS+=($!)
 
+# ── 12. Temp table and cursor usage ───────────────────────────────────
+echo "[+] Temp table / cursor patterns..."
+(
+    run_until "$END" psql "$DB" <<SQL > /dev/null 2>&1
+SET application_name = 'etl-pipeline';
+BEGIN;
+CREATE TEMP TABLE IF NOT EXISTS staging_events (LIKE analytics.events INCLUDING ALL) ON COMMIT DROP;
+INSERT INTO staging_events SELECT * FROM analytics.events ORDER BY random() LIMIT 100;
+SELECT pg_sleep(2);
+COMMIT;
+SQL
+    sleep 1
+) &
+PIDS+=($!)
+
 echo ""
-echo "All generators running. Watch with: make run"
+echo "All generators running (${#PIDS[@]} workers). Watch with: make run"
 echo "Load will stop in ${DURATION}s or press Ctrl+C"
 echo ""
 
