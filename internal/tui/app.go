@@ -462,11 +462,11 @@ func (a *App) fetchServerInfo() {
 }
 
 func (a *App) wireNavigation() {
-	// Queries: Enter -> Query Detail
+	// Queries: Enter -> Query Detail (no transaction history — that's for :txn)
 	if qv, ok := a.viewMap["queries"].(*views.Queries); ok {
 		qv.Table().SetSelectedFunc(func(row, col int) {
 			if q, ok := qv.SelectedQuery(); ok {
-				detail := views.NewQueryDetailView(q, a.db, a.queryHistory, a.app)
+				detail := views.NewQueryDetailView(q, a.db, nil, a.app)
 				a.showDetail("query-detail", detail)
 			}
 		})

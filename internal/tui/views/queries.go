@@ -137,7 +137,6 @@ func (v *Queries) refresh() {
 		for pid, prev := range v.prevPIDs {
 			if !currentPIDs[pid] && prev.User != "(system)" {
 				prev.State = "completed"
-				prev.Duration = 0
 				v.completed = append(v.completed, prev)
 			}
 		}
@@ -270,12 +269,17 @@ func (v *Queries) render() {
 		v.visibleData = append(v.visibleData, q)
 		grey := theme.ColorDim
 
+		durStr := ""
+		if q.Duration > 0 {
+			durStr = formatDuration(q.Duration)
+		}
+
 		v.table.SetCell(row, 0, tview.NewTableCell(pid).SetTextColor(grey))
 		v.table.SetCell(row, 1, tview.NewTableCell(q.User).SetTextColor(grey))
 		v.table.SetCell(row, 2, tview.NewTableCell(q.AppName).SetTextColor(grey).SetExpansion(1))
 		v.table.SetCell(row, 3, tview.NewTableCell("completed").SetTextColor(grey))
 		v.table.SetCell(row, 4, tview.NewTableCell("").SetTextColor(grey).SetExpansion(1))
-		v.table.SetCell(row, 5, tview.NewTableCell("").SetTextColor(grey))
+		v.table.SetCell(row, 5, tview.NewTableCell(durStr).SetTextColor(grey))
 		stmtCount := countStatements(q.Query)
 		v.table.SetCell(row, 6, tview.NewTableCell(fmt.Sprintf("%d", stmtCount)).SetTextColor(grey))
 		row++
