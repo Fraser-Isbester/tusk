@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/evertras/bubble-table/table"
 	"github.com/fraser-isbester/tusk/internal/db"
 )
 
@@ -36,18 +36,19 @@ type Connections struct {
 // NewConnections creates a new Connections view.
 func NewConnections(database *db.DB) *Connections {
 	cols := []table.Column{
-		{Title: "User", Width: 16},
-		{Title: "Application", Width: 20},
-		{Title: "State", Width: 14},
-		{Title: "Count", Width: 8},
+		table.NewFlexColumn("user", "User", 1),
+		table.NewFlexColumn("app", "Application", 2),
+		table.NewColumn("state", "State", 10),
+		table.NewColumn("count", "Count", 8),
 	}
 
-	t := table.New(
-		table.WithColumns(cols),
-		table.WithFocused(true),
-	)
-
-	t.SetStyles(defaultTableStyles())
+	t := table.New(cols).
+		Focused(true).
+		WithPageSize(20).
+		Border(NoBorder).
+		WithNoPagination().
+		HeaderStyle(HeaderStyle).
+		HighlightStyle(HighlightStyle)
 
 	return &Connections{
 		db:    database,
@@ -59,8 +60,7 @@ func NewConnections(database *db.DB) *Connections {
 func (v *Connections) SetSize(w, h int) {
 	v.width = w
 	v.height = h
-	v.table.SetWidth(w)
-	v.table.SetHeight(h - 2)
+	v.table = v.table.WithTargetWidth(w).WithPageSize(h - 2)
 }
 
 // ItemCount returns the number of connection groups.
@@ -68,11 +68,16 @@ func (v *Connections) ItemCount() int { return len(v.conns) }
 
 // SelectedUser returns the username from the currently selected row.
 func (v *Connections) SelectedUser() (string, bool) {
-	row := v.table.SelectedRow()
-	if row == nil || row[0] == "" {
+	row := v.table.HighlightedRow()
+	userVal, ok := row.Data["user"]
+	if !ok {
 		return "", false
 	}
-	return row[0], true
+	userStr, ok := userVal.(string)
+	if !ok || userStr == "" {
+		return "", false
+	}
+	return userStr, true
 }
 
 // Init starts the first data fetch.
@@ -124,23 +129,23 @@ func (v *Connections) View() string {
 		return fmt.Sprintf("Error: %v", v.err)
 	}
 
-	return TableBorder.Render(v.table.View())
+	return v.table.View()
 }
 
 func (v *Connections) updateRows() {
 	var rows []table.Row
 	for _, c := range v.conns {
-		row := table.Row{
-			c.User,
-			c.AppName,
-			c.State,
-			fmt.Sprintf("%d", c.Count),
-		}
-		if v.filterValue == "" || rowContains(row, v.filterValue) {
-			rows = append(rows, row)
+		displayCols := []string{c.User, c.AppName, c.State, fmt.Sprintf("%d", c.Count)}
+		if v.filterValue == "" || rowContains(displayCols, v.filterValue) {
+			rows = append(rows, table.NewRow(table.RowData{
+				"user":  c.User,
+				"app":   c.AppName,
+				"state": c.State,
+				"count": fmt.Sprintf("%d", c.Count),
+			}))
 		}
 	}
-	v.table.SetRows(rows)
+	v.table = v.table.WithRows(rows)
 }
 
 func (v *Connections) fetchData() tea.Cmd {

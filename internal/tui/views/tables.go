@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/evertras/bubble-table/table"
 	"github.com/fraser-isbester/tusk/internal/db"
+	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
 
 const tablesRefreshInterval = 5 * time.Second
@@ -36,22 +38,21 @@ type Tables struct {
 // NewTables creates a new Tables view.
 func NewTables(database *db.DB) *Tables {
 	cols := []table.Column{
-		{Title: "SCHEMA", Width: 8},
-		{Title: "TABLE", Width: 16},
-		{Title: "SIZE", Width: 8},
-		{Title: "ROWS", Width: 8},
-		{Title: "DEAD%", Width: 6},
-		{Title: "SEQ/IDX", Width: 8},
-		{Title: "LAST VAC", Width: 10},
+		table.NewColumn("schema", "SCHEMA", 8),
+		table.NewFlexColumn("table", "TABLE", 1),
+		table.NewColumn("size", "SIZE", 8),
+		table.NewColumn("rows", "ROWS", 8),
+		table.NewColumn("dead", "DEAD%", 6),
+		table.NewColumn("seqidx", "SEQ/IDX", 8),
+		table.NewColumn("lastvac", "LAST VAC", 10),
 	}
-
-	t := table.New(
-		table.WithColumns(cols),
-		table.WithFocused(true),
-	)
-
-	t.SetStyles(defaultTableStyles())
-
+	t := table.New(cols).
+		Focused(true).
+		WithPageSize(20).
+		Border(NoBorder).
+		WithNoPagination().
+		HeaderStyle(HeaderStyle).
+		HighlightStyle(HighlightStyle)
 	return &Tables{
 		db:    database,
 		table: t,
@@ -62,8 +63,7 @@ func NewTables(database *db.DB) *Tables {
 func (v *Tables) SetSize(w, h int) {
 	v.width = w
 	v.height = h
-	v.table.SetWidth(w)
-	v.table.SetHeight(h - 2)
+	v.table = v.table.WithTargetWidth(w).WithPageSize(h - 2)
 }
 
 // ItemCount returns the number of tables.
@@ -118,7 +118,7 @@ func (v *Tables) View() string {
 		return fmt.Sprintf("Error: %v", v.err)
 	}
 
-	return TableBorder.Render(v.table.View())
+	return v.table.View()
 }
 
 func (v *Tables) updateRows() {
@@ -145,20 +145,30 @@ func (v *Tables) updateRows() {
 			seqIdx = fmt.Sprintf("%d/%d", t.SeqScan, t.IdxScan)
 		}
 
-		row := table.Row{
-			t.Schema,
-			t.Name,
-			formatSize(t.TotalSize),
-			fmt.Sprintf("%d", t.LiveTuples),
-			deadStr,
-			seqIdx,
-			lastVac,
+		if v.filterValue != "" && !rowContains([]string{t.Schema, t.Name, formatSize(t.TotalSize), fmt.Sprintf("%d", t.LiveTuples), deadStr, seqIdx, lastVac}, v.filterValue) {
+			continue
 		}
-		if v.filterValue == "" || rowContains(row, v.filterValue) {
-			rows = append(rows, row)
-		}
+		rows = append(rows, table.NewRow(table.RowData{
+			"schema":    t.Schema,
+			"table":     t.Name,
+			"size":      formatSize(t.TotalSize),
+			"rows":      fmt.Sprintf("%d", t.LiveTuples),
+			"dead":      deadStr,
+			"seqidx":    seqIdx,
+			"lastvac":   lastVac,
+			"_dead_pct": deadPct,
+		}))
 	}
-	v.table.SetRows(rows)
+	v.table = v.table.WithRows(rows).WithRowStyleFunc(func(input table.RowStyleFuncInput) lipgloss.Style {
+		deadPct, _ := input.Row.Data["_dead_pct"].(float64)
+		if deadPct > 10 {
+			return lipgloss.NewStyle().Foreground(theme.ColorRed)
+		}
+		if deadPct > 5 {
+			return lipgloss.NewStyle().Foreground(theme.ColorYellow)
+		}
+		return lipgloss.NewStyle()
+	})
 }
 
 func (v *Tables) fetchData() tea.Cmd {

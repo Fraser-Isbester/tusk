@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/evertras/bubble-table/table"
 	"github.com/fraser-isbester/tusk/internal/db"
 )
 
@@ -35,18 +35,20 @@ type SlowQueries struct {
 // NewSlowQueries creates a new SlowQueries view.
 func NewSlowQueries(database *db.DB) *SlowQueries {
 	cols := []table.Column{
-		{Title: "QUERY", Width: 30},
-		{Title: "CALLS", Width: 8},
-		{Title: "TOTAL", Width: 10},
-		{Title: "MEAN", Width: 10},
-		{Title: "ROWS/CALL", Width: 10},
-		{Title: "HIT%", Width: 6},
+		table.NewFlexColumn("query", "QUERY", 1),
+		table.NewColumn("calls", "CALLS", 8),
+		table.NewColumn("total", "TOTAL", 10),
+		table.NewColumn("mean", "MEAN", 10),
+		table.NewColumn("rowscall", "ROWS/CALL", 10),
+		table.NewColumn("hit", "HIT%", 6),
 	}
-	t := table.New(
-		table.WithColumns(cols),
-		table.WithFocused(true),
-	)
-	t.SetStyles(defaultTableStyles())
+	t := table.New(cols).
+		Focused(true).
+		WithPageSize(20).
+		Border(NoBorder).
+		WithNoPagination().
+		HeaderStyle(HeaderStyle).
+		HighlightStyle(HighlightStyle)
 	return &SlowQueries{
 		db:    database,
 		table: t,
@@ -57,8 +59,7 @@ func NewSlowQueries(database *db.DB) *SlowQueries {
 func (v *SlowQueries) SetSize(w, h int) {
 	v.width = w
 	v.height = h
-	v.table.SetWidth(w)
-	v.table.SetHeight(h - 2)
+	v.table = v.table.WithTargetWidth(w).WithPageSize(h - 2)
 }
 
 // ItemCount returns the number of slow queries.
@@ -112,7 +113,7 @@ func (v *SlowQueries) View() string {
 	if v.err != nil {
 		return fmt.Sprintf("Error: %v", v.err)
 	}
-	return TableBorder.Render(v.table.View())
+	return v.table.View()
 }
 
 func (v *SlowQueries) updateRows() {
@@ -122,17 +123,16 @@ func (v *SlowQueries) updateRows() {
 		if sq.Calls > 0 {
 			rowsPerCall = sq.Rows / sq.Calls
 		}
-		row := table.Row{
-			truncate(sq.Query, 30),
-			fmt.Sprintf("%d", sq.Calls),
-			formatDuration(time.Duration(sq.TotalTime * float64(time.Millisecond))),
-			formatDuration(time.Duration(sq.MeanTime * float64(time.Millisecond))),
-			fmt.Sprintf("%d", rowsPerCall),
-			fmt.Sprintf("%.1f%%", sq.HitRatio*100),
-		}
-		rows = append(rows, row)
+		rows = append(rows, table.NewRow(table.RowData{
+			"query":    truncate(sq.Query, 30),
+			"calls":    fmt.Sprintf("%d", sq.Calls),
+			"total":    formatDuration(time.Duration(sq.TotalTime * float64(time.Millisecond))),
+			"mean":     formatDuration(time.Duration(sq.MeanTime * float64(time.Millisecond))),
+			"rowscall": fmt.Sprintf("%d", rowsPerCall),
+			"hit":      fmt.Sprintf("%.1f%%", sq.HitRatio*100),
+		}))
 	}
-	v.table.SetRows(rows)
+	v.table = v.table.WithRows(rows)
 }
 
 func (v *SlowQueries) fetchData() tea.Cmd {

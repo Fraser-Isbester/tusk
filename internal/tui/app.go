@@ -305,18 +305,22 @@ func (a *App) View() string {
 	// Crumbs line
 	crumbs := a.renderCrumbs(w)
 
-	// Bottom status
-	var bottom string
+	// Filter/command bar (between crumbs and view content, like k9s)
+	var filterBar string
 	if a.commandMode {
-		bottom = theme.Status.Width(w).Render(a.commandInput.View())
+		filterBar = theme.Status.Width(w).Render(a.commandInput.View())
 	} else if a.filter.Active() {
-		bottom = a.filter.View()
+		filterBar = a.filter.View()
 	} else {
-		bottom = a.renderStatus(w)
+		filterBar = ""
 	}
 
+	// Status bar always at bottom
+	statusBar := a.renderStatus(w)
+
 	// View content fills remaining space
-	viewHeight := h - headerLines - 2 // crumbs + status
+	// chrome = header + crumbs + filter bar + status bar
+	viewHeight := h - headerLines - 3 // crumbs + filter line + status
 	if viewHeight < 1 {
 		viewHeight = 1
 	}
@@ -336,7 +340,7 @@ func (a *App) View() string {
 	}
 	middle := strings.Join(viewLines, "\n")
 
-	return header + "\n" + crumbs + "\n" + middle + "\n" + bottom
+	return header + "\n" + crumbs + "\n" + filterBar + "\n" + middle + "\n" + statusBar
 }
 
 // renderHeader renders k9s-style info lines at top with ASCII tusk art.
@@ -555,8 +559,8 @@ func (a *App) switchView(name string) tea.Cmd {
 }
 
 func (a *App) resizeViews() {
-	// Header is 6 lines, crumbs is 1, status is 1 = 8 chrome lines
-	viewHeight := a.height - 8
+	// Header is 6 lines, crumbs is 1, filter bar is 1, status is 1 = 9 chrome lines
+	viewHeight := a.height - 9
 	if viewHeight < 1 {
 		viewHeight = 1
 	}

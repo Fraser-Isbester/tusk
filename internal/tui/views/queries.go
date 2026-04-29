@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/evertras/bubble-table/table"
 	"github.com/fraser-isbester/tusk/internal/db"
+	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
 
 const queriesRefreshInterval = 2 * time.Second
@@ -43,18 +45,34 @@ type Queries struct {
 // NewQueries creates a new Queries view.
 func NewQueries(database *db.DB) *Queries {
 	cols := []table.Column{
-		{Title: "PID", Width: 6},
-		{Title: "USER", Width: 10},
-		{Title: "APP", Width: 18},
-		{Title: "STATE", Width: 8},
-		{Title: "WAIT", Width: 18},
-		{Title: "DURATION", Width: 8},
+		table.NewColumn("pid", "PID", 7),
+		table.NewColumn("user", "USER", 10),
+		table.NewFlexColumn("app", "APP", 2),
+		table.NewColumn("state", "STATE", 8),
+		table.NewFlexColumn("wait", "WAIT", 2),
+		table.NewColumn("duration", "DURATION", 10),
 	}
-	t := table.New(
-		table.WithColumns(cols),
-		table.WithFocused(true),
-	)
-	t.SetStyles(defaultTableStyles())
+	t := table.New(cols).
+		Focused(true).
+		WithPageSize(20).
+		Border(NoBorder).
+		WithNoPagination().
+		HeaderStyle(HeaderStyle).
+		HighlightStyle(HighlightStyle).
+		WithRowStyleFunc(func(input table.RowStyleFuncInput) lipgloss.Style {
+			dur, _ := input.Row.Data["_dur"].(time.Duration)
+			state, _ := input.Row.Data["_state"].(string)
+			if state == "idle in transaction" || state == "idle in transaction (aborted)" {
+				return lipgloss.NewStyle().Foreground(theme.ColorRed)
+			}
+			if dur >= 30*time.Second {
+				return lipgloss.NewStyle().Foreground(theme.ColorRed)
+			}
+			if dur >= 1*time.Second {
+				return lipgloss.NewStyle().Foreground(theme.ColorYellow)
+			}
+			return lipgloss.NewStyle()
+		})
 	return &Queries{
 		db:    database,
 		table: t,
@@ -65,8 +83,7 @@ func NewQueries(database *db.DB) *Queries {
 func (q *Queries) SetSize(w, h int) {
 	q.width = w
 	q.height = h
-	q.table.SetWidth(w)
-	q.table.SetHeight(h - 2)
+	q.table = q.table.WithTargetWidth(w).WithPageSize(h - 2)
 }
 
 // ItemCount returns the number of queries.
@@ -148,7 +165,7 @@ func (q *Queries) View() string {
 		return fmt.Sprintf("Error: %v", q.err)
 	}
 
-	return TableBorder.Render(q.table.View())
+	return q.table.View()
 }
 
 func (q *Queries) updateRows() {
@@ -172,21 +189,35 @@ func (q *Queries) updateRows() {
 			durStr = formatDuration(aq.Duration)
 		}
 
-		row := table.Row{pid, aq.User, aq.AppName, aq.State, wait, durStr}
-		if q.filterValue == "" || rowContains(row, q.filterValue) {
-			rows = append(rows, row)
+		displayCols := []string{pid, aq.User, aq.AppName, aq.State, wait, durStr}
+		if q.filterValue == "" || rowContains(displayCols, q.filterValue) {
+			rows = append(rows, table.NewRow(table.RowData{
+				"pid":      pid,
+				"user":     aq.User,
+				"app":      aq.AppName,
+				"state":    aq.State,
+				"wait":     wait,
+				"duration": durStr,
+				"_dur":     aq.Duration,
+				"_state":   aq.State,
+			}))
 		}
 	}
-	q.table.SetRows(rows)
+	q.table = q.table.WithRows(rows)
 }
 
 func (q *Queries) selectedPID() (int, bool) {
-	row := q.table.SelectedRow()
-	if row == nil {
+	row := q.table.HighlightedRow()
+	pidVal, ok := row.Data["pid"]
+	if !ok {
+		return 0, false
+	}
+	pidStr, ok := pidVal.(string)
+	if !ok || pidStr == "" {
 		return 0, false
 	}
 	var pid int
-	if _, err := fmt.Sscanf(row[0], "%d", &pid); err != nil {
+	if _, err := fmt.Sscanf(pidStr, "%d", &pid); err != nil {
 		return 0, false
 	}
 	return pid, true

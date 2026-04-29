@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/evertras/bubble-table/table"
 	"github.com/fraser-isbester/tusk/internal/db"
+	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
 
 const transactionsRefreshInterval = 2 * time.Second
@@ -40,18 +42,20 @@ type Transactions struct {
 // NewTransactions creates a new Transactions view.
 func NewTransactions(database *db.DB) *Transactions {
 	cols := []table.Column{
-		{Title: "PID", Width: 6},
-		{Title: "USER", Width: 10},
-		{Title: "APP", Width: 18},
-		{Title: "STATE", Width: 8},
-		{Title: "TXN AGE", Width: 10},
-		{Title: "Q AGE", Width: 10},
+		table.NewColumn("pid", "PID", 7),
+		table.NewColumn("user", "USER", 10),
+		table.NewFlexColumn("app", "APP", 2),
+		table.NewColumn("state", "STATE", 8),
+		table.NewColumn("txn_age", "TXN AGE", 10),
+		table.NewColumn("q_age", "Q AGE", 10),
 	}
-	t := table.New(
-		table.WithColumns(cols),
-		table.WithFocused(true),
-	)
-	t.SetStyles(defaultTableStyles())
+	t := table.New(cols).
+		Focused(true).
+		WithPageSize(20).
+		Border(NoBorder).
+		WithNoPagination().
+		HeaderStyle(HeaderStyle).
+		HighlightStyle(HighlightStyle)
 	return &Transactions{
 		db:    database,
 		table: t,
@@ -62,8 +66,7 @@ func NewTransactions(database *db.DB) *Transactions {
 func (v *Transactions) SetSize(w, h int) {
 	v.width = w
 	v.height = h
-	v.table.SetWidth(w)
-	v.table.SetHeight(h - 2)
+	v.table = v.table.WithTargetWidth(w).WithPageSize(h - 2)
 }
 
 // ItemCount returns the number of transactions.
@@ -71,22 +74,22 @@ func (v *Transactions) ItemCount() int { return len(v.data) }
 
 // SelectedQuery returns an ActiveQuery built from the selected transaction row.
 func (v *Transactions) SelectedQuery() (db.ActiveQuery, bool) {
-	pid, ok := v.selectedPID()
+	row := v.table.HighlightedRow()
+	pid, ok := row.Data["_pid"].(int)
 	if !ok {
 		return db.ActiveQuery{}, false
 	}
-	for _, txn := range v.data {
-		if txn.PID == pid {
-			return db.ActiveQuery{
-				PID:     txn.PID,
-				User:    txn.User,
-				AppName: txn.AppName,
-				State:   txn.State,
-				Query:   txn.Query,
-			}, true
-		}
-	}
-	return db.ActiveQuery{}, false
+	query, _ := row.Data["_query"].(string)
+	user, _ := row.Data["user"].(string)
+	app, _ := row.Data["app"].(string)
+	state, _ := row.Data["_state"].(string)
+	return db.ActiveQuery{
+		PID:     pid,
+		User:    user,
+		AppName: app,
+		State:   state,
+		Query:   query,
+	}, true
 }
 
 // Init starts the first data fetch.
@@ -142,7 +145,7 @@ func (v *Transactions) View() string {
 	if v.err != nil {
 		return fmt.Sprintf("Error: %v", v.err)
 	}
-	return TableBorder.Render(v.table.View())
+	return v.table.View()
 }
 
 func (v *Transactions) updateRows() {
@@ -151,26 +154,39 @@ func (v *Transactions) updateRows() {
 		if txn.User == "(system)" {
 			continue
 		}
-		row := table.Row{
-			fmt.Sprintf("%d", txn.PID),
-			txn.User,
-			txn.AppName,
-			txn.State,
-			formatDuration(txn.XactDuration),
-			formatDuration(txn.QueryDuration),
-		}
-		rows = append(rows, row)
+		rows = append(rows, table.NewRow(table.RowData{
+			"pid":       fmt.Sprintf("%d", txn.PID),
+			"user":      txn.User,
+			"app":       txn.AppName,
+			"state":     txn.State,
+			"txn_age":   formatDuration(txn.XactDuration),
+			"q_age":     formatDuration(txn.QueryDuration),
+			"_xact_dur": txn.XactDuration,
+			"_state":    txn.State,
+			"_query":    txn.Query,
+			"_pid":      txn.PID,
+		}))
 	}
-	v.table.SetRows(rows)
+	v.table = v.table.WithRows(rows).WithRowStyleFunc(func(input table.RowStyleFuncInput) lipgloss.Style {
+		state, _ := input.Row.Data["_state"].(string)
+		xactDur, _ := input.Row.Data["_xact_dur"].(time.Duration)
+		if state == "idle in transaction" {
+			return lipgloss.NewStyle().Foreground(theme.ColorRed)
+		}
+		if xactDur >= 60*time.Second {
+			return lipgloss.NewStyle().Foreground(theme.ColorRed)
+		}
+		if xactDur >= 30*time.Second {
+			return lipgloss.NewStyle().Foreground(theme.ColorYellow)
+		}
+		return lipgloss.NewStyle()
+	})
 }
 
 func (v *Transactions) selectedPID() (int, bool) {
-	row := v.table.SelectedRow()
-	if row == nil {
-		return 0, false
-	}
-	var pid int
-	if _, err := fmt.Sscanf(row[0], "%d", &pid); err != nil {
+	row := v.table.HighlightedRow()
+	pid, ok := row.Data["_pid"].(int)
+	if !ok {
 		return 0, false
 	}
 	return pid, true

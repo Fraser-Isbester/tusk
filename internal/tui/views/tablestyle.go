@@ -1,22 +1,24 @@
 package views
 
 import (
-	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/evertras/bubble-table/table"
 	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
 
-func defaultTableStyles() table.Styles {
-	s := table.DefaultStyles()
-	s.Header = s.Header.
-		Foreground(theme.ColorTableHeader).
-		Bold(true)
-	s.Selected = s.Selected.
-		Foreground(theme.ColorSelectedFg).
-		Background(theme.ColorSelectedBg)
-	return s
+// NoBorder removes all table borders for a clean k9s-style look.
+var NoBorder = table.Border{
+	Top: " ", Bottom: " ", Left: " ", Right: " ",
+	TopLeft: " ", TopRight: " ", BottomLeft: " ", BottomRight: " ",
+	TopJunction: " ", BottomJunction: " ", LeftJunction: " ", RightJunction: " ",
+	InnerJunction: " ", InnerDivider: " ",
 }
 
-var TableBorder = lipgloss.NewStyle().
-	Border(lipgloss.RoundedBorder()).
-	BorderForeground(theme.ColorBorder)
+var HeaderStyle = lipgloss.NewStyle().
+	Foreground(theme.ColorTableHeader).
+	Bold(true)
+
+var HighlightStyle = lipgloss.NewStyle().
+	Foreground(theme.ColorSelectedFg).
+	Background(theme.ColorSelectedBg).
+	Bold(true)

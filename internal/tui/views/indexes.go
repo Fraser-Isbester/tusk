@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/evertras/bubble-table/table"
 	"github.com/fraser-isbester/tusk/internal/db"
+	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
 
 const indexesRefreshInterval = 10 * time.Second
@@ -35,16 +37,18 @@ type Indexes struct {
 // NewIndexes creates a new Indexes view.
 func NewIndexes(database *db.DB) *Indexes {
 	cols := []table.Column{
-		{Title: "TABLE", Width: 16},
-		{Title: "INDEX", Width: 24},
-		{Title: "SCANS", Width: 8},
-		{Title: "SIZE", Width: 10},
+		table.NewFlexColumn("table", "TABLE", 1),
+		table.NewFlexColumn("index", "INDEX", 2),
+		table.NewColumn("scans", "SCANS", 8),
+		table.NewColumn("size", "SIZE", 10),
 	}
-	t := table.New(
-		table.WithColumns(cols),
-		table.WithFocused(true),
-	)
-	t.SetStyles(defaultTableStyles())
+	t := table.New(cols).
+		Focused(true).
+		WithPageSize(20).
+		Border(NoBorder).
+		WithNoPagination().
+		HeaderStyle(HeaderStyle).
+		HighlightStyle(HighlightStyle)
 	return &Indexes{
 		db:    database,
 		table: t,
@@ -55,8 +59,7 @@ func NewIndexes(database *db.DB) *Indexes {
 func (v *Indexes) SetSize(w, h int) {
 	v.width = w
 	v.height = h
-	v.table.SetWidth(w)
-	v.table.SetHeight(h - 2)
+	v.table = v.table.WithTargetWidth(w).WithPageSize(h - 2)
 }
 
 // ItemCount returns the number of indexes.
@@ -110,21 +113,30 @@ func (v *Indexes) View() string {
 	if v.err != nil {
 		return fmt.Sprintf("Error: %v", v.err)
 	}
-	return TableBorder.Render(v.table.View())
+	return v.table.View()
 }
 
 func (v *Indexes) updateRows() {
 	var rows []table.Row
 	for _, idx := range v.data {
-		row := table.Row{
-			idx.Table,
-			idx.IndexName,
-			fmt.Sprintf("%d", idx.Scans),
-			formatSize(idx.Size),
-		}
-		rows = append(rows, row)
+		rows = append(rows, table.NewRow(table.RowData{
+			"table":  idx.Table,
+			"index":  idx.IndexName,
+			"scans":  fmt.Sprintf("%d", idx.Scans),
+			"size":   formatSize(idx.Size),
+			"_scans": idx.Scans,
+		}))
 	}
-	v.table.SetRows(rows)
+	v.table = v.table.WithRows(rows).WithRowStyleFunc(func(input table.RowStyleFuncInput) lipgloss.Style {
+		scans, _ := input.Row.Data["_scans"].(int64)
+		if scans == 0 {
+			return lipgloss.NewStyle().Foreground(theme.ColorRed)
+		}
+		if scans < 100 {
+			return lipgloss.NewStyle().Foreground(theme.ColorYellow)
+		}
+		return lipgloss.NewStyle()
+	})
 }
 
 func (v *Indexes) fetchData() tea.Cmd {
