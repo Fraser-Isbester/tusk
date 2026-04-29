@@ -31,7 +31,7 @@ func NewLocksView(database *db.DB) *Locks {
 		db:    database,
 	}
 	v.table.SetBackgroundColor(tcell.ColorDefault)
-	v.table.SetBorder(false)
+	v.table.SetBorder(true).SetBorderColor(theme.ColorBorder).SetBorderPadding(0, 0, 1, 1)
 	v.table.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Rune() == 't' {
 			v.terminateBlocker()

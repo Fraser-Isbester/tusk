@@ -33,7 +33,7 @@ func NewDatabasesView(database *db.DB) *Databases {
 		db: database,
 	}
 	v.table.SetBackgroundColor(tcell.ColorDefault)
-	v.table.SetBorder(false)
+	v.table.SetBorder(true).SetBorderColor(theme.ColorBorder).SetBorderPadding(0, 0, 1, 1)
 	return v
 }
 

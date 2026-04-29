@@ -33,11 +33,12 @@ type App struct {
 	color    string
 	readonly bool
 
-	layout *tview.Flex
-	header *tview.TextView
-	crumbs *tview.TextView
-	status *tview.TextView
-	pages  *tview.Pages
+	layout    *tview.Flex
+	header    *tview.TextView
+	tabBar    *tview.TextView
+	status    *tview.TextView
+	pages     *tview.Pages
+	viewOrder []string
 
 	cmdPrompt   *tview.InputField
 	cmdBox      *tview.Flex
@@ -101,10 +102,12 @@ func (a *App) buildLayout() {
 		SetTextAlign(tview.AlignLeft)
 	a.header.SetBackgroundColor(tcell.ColorDefault)
 
-	a.crumbs = tview.NewTextView().
+	a.viewOrder = []string{"queries", "transactions", "connections", "tables", "locks", "indexes", "slow", "db", "roles", "rules", "breaches"}
+
+	a.tabBar = tview.NewTextView().
 		SetDynamicColors(true).
-		SetTextAlign(tview.AlignCenter)
-	a.crumbs.SetBackgroundColor(theme.ColorHeaderBg)
+		SetTextAlign(tview.AlignLeft)
+	a.tabBar.SetBackgroundColor(theme.ColorHeaderBg)
 
 	a.status = tview.NewTextView().
 		SetDynamicColors(true).
@@ -141,7 +144,7 @@ func (a *App) buildLayout() {
 
 	a.layout = tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(a.header, 8, 0, false).
-		AddItem(a.crumbs, 1, 0, false).
+		AddItem(a.tabBar, 1, 0, false).
 		AddItem(a.pages, 0, 1, true).
 		AddItem(a.status, 1, 0, false)
 	a.layout.SetBackgroundColor(tcell.ColorDefault)
@@ -189,7 +192,7 @@ func (a *App) switchView(name string) {
 	v := a.viewMap[name]
 	v.Start(a.app)
 	a.app.SetFocus(v.Table())
-	a.updateCrumbs()
+	a.updateTabBar()
 	a.updateStatus()
 }
 
@@ -238,6 +241,12 @@ func (a *App) setupKeys() {
 				a.app.Stop()
 				return nil
 			}
+		case tcell.KeyLeft:
+			a.cycleTab(-1)
+			return nil
+		case tcell.KeyRight:
+			a.cycleTab(1)
+			return nil
 		case tcell.KeyCtrlC:
 			a.app.Stop()
 			return nil
@@ -287,7 +296,7 @@ func (a *App) showFilter() {
 		if v, ok := a.viewMap[a.activeView]; ok {
 			v.SetFilter(text)
 		}
-		a.updateCrumbs()
+		a.updateTabBar()
 	})
 
 	// Insert filterBox between crumbs and pages
@@ -311,7 +320,7 @@ func (a *App) hideFilter(clear bool) {
 		}
 	}
 
-	a.updateCrumbs()
+	a.updateTabBar()
 	if v, ok := a.viewMap[a.activeView]; ok {
 		a.app.SetFocus(v.Table())
 	}
@@ -411,16 +420,55 @@ func (a *App) updateHeader() {
 	a.header.SetText(strings.Join(lines, "\n"))
 }
 
-func (a *App) updateCrumbs() {
-	count := 0
-	if v, ok := a.viewMap[a.activeView]; ok {
-		count = v.ItemCount()
+func (a *App) cycleTab(dir int) {
+	// Find current index in viewOrder
+	current := -1
+	for i, name := range a.viewOrder {
+		if name == a.activeView || strings.HasPrefix(a.activeView, name+"-") {
+			current = i
+			break
+		}
 	}
-	text := fmt.Sprintf("[#00D7FF::b]%s(%d)[-:-:-]", a.activeView, count)
+	if current < 0 {
+		return
+	}
+	next := (current + dir + len(a.viewOrder)) % len(a.viewOrder)
+	// Skip views that don't exist in the viewMap
+	for i := 0; i < len(a.viewOrder); i++ {
+		name := a.viewOrder[next]
+		if _, ok := a.viewMap[name]; ok {
+			a.switchView(name)
+			return
+		}
+		next = (next + dir + len(a.viewOrder)) % len(a.viewOrder)
+	}
+}
+
+func (a *App) updateTabBar() {
+	var parts []string
+	for _, name := range a.viewOrder {
+		if _, ok := a.viewMap[name]; !ok {
+			continue
+		}
+		label := name
+		if name == a.activeView || strings.HasPrefix(a.activeView, name+"-") {
+			count := 0
+			if v, ok := a.viewMap[a.activeView]; ok {
+				count = v.ItemCount()
+			} else if v, ok := a.viewMap[name]; ok {
+				count = v.ItemCount()
+			}
+			label = fmt.Sprintf("[#000000:#00D7FF:b] %s(%d) [-:-:-]", name, count)
+		} else {
+			label = fmt.Sprintf("[#808080] %s [-]", name)
+		}
+		parts = append(parts, label)
+	}
+	text := strings.Join(parts, "[#585858]│[-]")
 	if a.filterText != "" {
-		text += fmt.Sprintf(" [#808080]filter: %s[-]", a.filterText)
+		text += fmt.Sprintf("  [#808080]filter: %s[-]", a.filterText)
 	}
-	a.crumbs.SetText(text)
+	a.tabBar.SetText(text)
 }
 
 func (a *App) updateStatus() {
@@ -450,14 +498,14 @@ func (a *App) startServerInfoPoller() {
 		a.evaluateRules()
 		a.app.QueueUpdateDraw(func() {
 			a.updateHeader()
-			a.updateCrumbs()
+			a.updateTabBar()
 		})
 		for range ticker.C {
 			a.fetchServerInfo()
 			a.evaluateRules()
 			a.app.QueueUpdateDraw(func() {
 				a.updateHeader()
-				a.updateCrumbs()
+				a.updateTabBar()
 			})
 		}
 	}()
@@ -625,12 +673,12 @@ func (a *App) wireNavigation() {
 	}
 }
 
-func (a *App) showDetail(name string, detail *tview.TextView) {
+func (a *App) showDetail(name string, detail tview.Primitive) {
 	a.pages.AddPage(name, detail, true, true)
 	a.viewStack = append(a.viewStack, a.activeView)
 	a.activeView = name
 	a.app.SetFocus(detail)
-	a.updateCrumbs()
+	a.updateTabBar()
 	a.updateStatus()
 }
 
@@ -706,7 +754,7 @@ func (a *App) showFilteredView(name string, view View) {
 	a.viewStack = append(a.viewStack, a.activeView)
 	a.activeView = name
 	a.app.SetFocus(view.Table())
-	a.updateCrumbs()
+	a.updateTabBar()
 	a.updateStatus()
 }
 

@@ -145,28 +145,58 @@ func mergeComments(query string) db.SQLComment {
 	return merged
 }
 
-// NewQueryDetailView creates a detail view for an active query.
-// If history is non-nil, shows the query history for this PID.
-// The view live-refreshes every 2s by re-fetching the query from the DB.
-func NewQueryDetailView(q db.Query, dbConn *db.DB, history *db.QueryHistory, app *tview.Application) *tview.TextView {
+// queryDetailPanes holds the sub-views for the split-pane query detail.
+type queryDetailPanes struct {
+	meta    *tview.TextView
+	query   *tview.TextView
+	rules   *tview.TextView
+	history *tview.TextView
+}
+
+func newTextPane(title string) *tview.TextView {
 	tv := tview.NewTextView().
 		SetDynamicColors(true).
 		SetScrollable(true).
 		SetWordWrap(true)
 	tv.SetBackgroundColor(tcell.ColorDefault)
-	tv.SetBorder(false)
+	tv.SetBorder(true).SetBorderColor(tcell.GetColor("#585858")).SetTitle(" " + title + " ").SetTitleColor(tcell.GetColor("#00D7FF"))
+	return tv
+}
+
+// NewQueryDetailView creates a split-pane detail view for an active query.
+func NewQueryDetailView(q db.Query, dbConn *db.DB, history *db.QueryHistory, app *tview.Application) *tview.Flex {
+	panes := &queryDetailPanes{
+		meta:    newTextPane("Info"),
+		query:   newTextPane("Query"),
+		rules:   newTextPane("Rules"),
+		history: newTextPane("History"),
+	}
+
+	// Middle row: query (left) + rules (right)
+	middle := tview.NewFlex().SetDirection(tview.FlexColumn).
+		AddItem(panes.query, 0, 2, false).
+		AddItem(panes.rules, 0, 1, false)
+	middle.SetBackgroundColor(tcell.ColorDefault)
+
+	layout := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(panes.meta, 8, 0, false).
+		AddItem(middle, 0, 1, true).
+		AddItem(panes.history, 8, 0, false)
+	layout.SetBackgroundColor(tcell.ColorDefault)
 
 	var statusMsg string
 
-	renderWithStatus := func(query db.Query) {
-		renderQueryDetail(tv, query, history, statusMsg)
+	renderAll := func(query db.Query) {
+		renderMetaPane(panes.meta, query, history, statusMsg)
+		renderQueryPane(panes.query, query)
+		renderRulesPane(panes.rules, query)
+		renderHistoryPane(panes.history, query, history)
 	}
 
-	renderWithStatus(q)
+	renderAll(q)
 
-	// Don't live-refresh completed queries — the data is frozen
 	if q.State == "completed" {
-		return tv
+		return layout
 	}
 
 	pid := q.PID
@@ -174,7 +204,6 @@ func NewQueryDetailView(q db.Query, dbConn *db.DB, history *db.QueryHistory, app
 	var closeOnce sync.Once
 	stopRefresh := func() { closeOnce.Do(func() { close(done) }) }
 
-	// Live refresh goroutine.
 	go func() {
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
@@ -188,9 +217,7 @@ func NewQueryDetailView(q db.Query, dbConn *db.DB, history *db.QueryHistory, app
 				}
 				for _, updated := range queries {
 					if updated.PID == pid {
-						app.QueueUpdateDraw(func() {
-							renderWithStatus(updated)
-						})
+						app.QueueUpdateDraw(func() { renderAll(updated) })
 						break
 					}
 				}
@@ -200,7 +227,7 @@ func NewQueryDetailView(q db.Query, dbConn *db.DB, history *db.QueryHistory, app
 		}
 	}()
 
-	tv.SetInputCapture(func(evt *tcell.EventKey) *tcell.EventKey {
+	layout.SetInputCapture(func(evt *tcell.EventKey) *tcell.EventKey {
 		switch evt.Rune() {
 		case 'c':
 			go func() {
@@ -211,7 +238,7 @@ func NewQueryDetailView(q db.Query, dbConn *db.DB, history *db.QueryHistory, app
 					} else {
 						statusMsg = fmt.Sprintf("[#00D700]Cancelled PID %d[-]", pid)
 					}
-					renderWithStatus(q)
+					renderAll(q)
 				})
 			}()
 			return nil
@@ -224,7 +251,7 @@ func NewQueryDetailView(q db.Query, dbConn *db.DB, history *db.QueryHistory, app
 					} else {
 						statusMsg = fmt.Sprintf("[#00D700]Terminated PID %d[-]", pid)
 					}
-					renderWithStatus(q)
+					renderAll(q)
 				})
 			}()
 			return nil
@@ -237,15 +264,13 @@ func NewQueryDetailView(q db.Query, dbConn *db.DB, history *db.QueryHistory, app
 		return evt
 	})
 
-	return tv
+	return layout
 }
 
-func renderQueryDetail(tv *tview.TextView, q db.Query, history *db.QueryHistory, statusMsg string) {
+func renderMetaPane(tv *tview.TextView, q db.Query, history *db.QueryHistory, statusMsg string) {
 	var b strings.Builder
-	b.WriteString("\n")
-
 	if statusMsg != "" {
-		b.WriteString(statusMsg + "\n\n")
+		b.WriteString(statusMsg + "\n")
 	}
 
 	b.WriteString(kvLine("PID", fmt.Sprintf("%d", q.PID)))
@@ -265,12 +290,8 @@ func renderQueryDetail(tv *tview.TextView, q db.Query, history *db.QueryHistory,
 	}
 
 	b.WriteString(kvLineColored("Duration", formatDuration(q.Duration), durationColor(q.Duration)))
+	b.WriteString(kvLine("Statements", fmt.Sprintf("%d", countStatements(q.QueryText))))
 
-	// Statement count (within current query batch)
-	stmts := countStatements(q.QueryText)
-	b.WriteString(kvLine("Statements", fmt.Sprintf("%d", stmts)))
-
-	// Query count (distinct queries observed in this transaction via history)
 	if history != nil {
 		entries := history.Get(q.PID)
 		if len(entries) > 1 {
@@ -282,9 +303,8 @@ func renderQueryDetail(tv *tview.TextView, q db.Query, history *db.QueryHistory,
 		}
 	}
 
-	// SQLcommentor tags — parse from query text, merge across statements.
+	// SQLcommentor tags
 	comment := mergeComments(q.QueryText)
-	// Also merge with pre-parsed comment on the ActiveQuery.
 	if q.Comment.App != "" && comment.App == "" {
 		comment.App = q.Comment.App
 	}
@@ -300,8 +320,6 @@ func renderQueryDetail(tv *tview.TextView, q db.Query, history *db.QueryHistory,
 	if q.Comment.Framework != "" && comment.Framework == "" {
 		comment.Framework = q.Comment.Framework
 	}
-
-	// Show tags inline in the header area
 	if comment.App != "" || comment.Route != "" || comment.Controller != "" || comment.Action != "" || comment.Framework != "" {
 		var tags []string
 		if comment.App != "" {
@@ -322,50 +340,84 @@ func renderQueryDetail(tv *tview.TextView, q db.Query, history *db.QueryHistory,
 		b.WriteString(fmt.Sprintf("[#D78700]%-16s[-] %s\n", "Tags:", strings.Join(tags, "  ")))
 	}
 
-	// Current query with syntax highlighting.
-	b.WriteString(separator("Query"))
-	b.WriteString(highlightSQL(q.QueryText) + "\n")
-
-	// Query history for this PID.
-	if history != nil {
-		entries := history.Get(q.PID)
-		if len(entries) > 1 {
-			b.WriteString(separator(fmt.Sprintf("Transaction History (%d queries)", len(entries))))
-			for i, e := range entries {
-				ts := e.Timestamp.Format("15:04:05")
-				prefix := "  "
-				if i == len(entries)-1 {
-					prefix = "→ " // current query
-				}
-				// Truncate long queries for the history list.
-				queryPreview := e.Query
-				if len(queryPreview) > 120 {
-					queryPreview = queryPreview[:117] + "..."
-				}
-				b.WriteString(fmt.Sprintf("[#808080]%s%s[-] [#585858]%s[-] %s\n",
-					prefix, ts, e.State, highlightSQL(queryPreview)))
-			}
-		}
-	}
-
-	// Footer
-	b.WriteString("\n[#808080][c] cancel  [t] terminate  [Esc] back[-]\n")
-
 	tv.SetText(b.String())
 }
 
-// NewLockDetailView creates a detail view for a lock.
-func NewLockDetailView(l db.Lock, dbConn *db.DB) *tview.TextView {
-	tv := tview.NewTextView().
-		SetDynamicColors(true).
-		SetScrollable(true).
-		SetWordWrap(true)
-	tv.SetBackgroundColor(tcell.ColorDefault)
-	tv.SetBorder(false)
+func renderQueryPane(tv *tview.TextView, q db.Query) {
+	tv.SetText(highlightSQL(q.QueryText))
+}
 
-	renderLockDetail(tv, l)
+func renderRulesPane(tv *tview.TextView, q db.Query) {
+	// Show which rules match this query's attributes
+	var b strings.Builder
+	b.WriteString("[#808080]Matching rules for PID " + fmt.Sprintf("%d", q.PID) + "[-]\n\n")
+	b.WriteString("[#808080]Rules are evaluated every 2s.\nBreaches appear in the :breaches view.[-]\n")
+	tv.SetText(b.String())
+}
 
-	tv.SetInputCapture(func(evt *tcell.EventKey) *tcell.EventKey {
+func renderHistoryPane(tv *tview.TextView, q db.Query, history *db.QueryHistory) {
+	if history == nil {
+		tv.SetText("[#808080]No transaction history[-]")
+		return
+	}
+	entries := history.Get(q.PID)
+	if len(entries) <= 1 {
+		tv.SetText("[#808080]Single statement — no history[-]")
+		return
+	}
+	var b strings.Builder
+	for i, e := range entries {
+		prefix := "  "
+		if i == len(entries)-1 {
+			prefix = "→ "
+		}
+		queryPreview := e.Query
+		if len(queryPreview) > 120 {
+			queryPreview = queryPreview[:117] + "..."
+		}
+		b.WriteString(fmt.Sprintf("[#808080]%s%s[-] [#585858]%s[-] %s\n",
+			prefix, e.Timestamp.Format("15:04:05"), e.State, highlightSQL(queryPreview)))
+	}
+	tv.SetText(b.String())
+}
+
+// NewLockDetailView creates a split-pane detail view for a lock.
+func NewLockDetailView(l db.Lock, dbConn *db.DB) *tview.Flex {
+	meta := newTextPane("Lock Info")
+	blocked := newTextPane(fmt.Sprintf("Blocked (PID %d)", l.BlockedPID))
+	blocker := newTextPane(fmt.Sprintf("Blocker (PID %d)", l.BlockingPID))
+
+	var mb strings.Builder
+	mb.WriteString(kvLine("Lock Type", l.LockType))
+	mb.WriteString(kvLine("Mode", l.Mode))
+	mb.WriteString(kvLineColored("Wait Time", formatDuration(l.WaitDuration), durationColor(l.WaitDuration)))
+	mb.WriteString(kvLine("Blocked PID", fmt.Sprintf("%d", l.BlockedPID)))
+	mb.WriteString(kvLine("Blocker PID", fmt.Sprintf("%d", l.BlockingPID)))
+	meta.SetText(mb.String())
+
+	var bl strings.Builder
+	bl.WriteString(kvLine("User", l.BlockedUser))
+	bl.WriteString(kvLine("App", l.BlockedApp))
+	bl.WriteString("\n" + highlightSQL(l.BlockedQuery) + "\n")
+	blocked.SetText(bl.String())
+
+	var bk strings.Builder
+	bk.WriteString(kvLine("User", l.BlockingUser))
+	bk.WriteString(kvLine("App", l.BlockingApp))
+	bk.WriteString("\n" + highlightSQL(l.BlockingQuery) + "\n")
+	blocker.SetText(bk.String())
+
+	queries := tview.NewFlex().SetDirection(tview.FlexColumn).
+		AddItem(blocked, 0, 1, false).
+		AddItem(blocker, 0, 1, false)
+	queries.SetBackgroundColor(tcell.ColorDefault)
+
+	layout := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(meta, 7, 0, false).
+		AddItem(queries, 0, 1, true)
+	layout.SetBackgroundColor(tcell.ColorDefault)
+
+	layout.SetInputCapture(func(evt *tcell.EventKey) *tcell.EventKey {
 		if evt.Rune() == 't' {
 			go func() {
 				dbConn.TerminateBackend(context.Background(), l.BlockingPID)
@@ -375,68 +427,47 @@ func NewLockDetailView(l db.Lock, dbConn *db.DB) *tview.TextView {
 		return evt
 	})
 
-	return tv
-}
-
-func renderLockDetail(tv *tview.TextView, l db.Lock) {
-	var b strings.Builder
-	b.WriteString("\n")
-	b.WriteString(kvLine("Lock Type", l.LockType))
-	b.WriteString(kvLine("Mode", l.Mode))
-	b.WriteString(kvLineColored("Wait Time", formatDuration(l.WaitDuration), durationColor(l.WaitDuration)))
-
-	// Blocked section
-	b.WriteString(separator("Blocked"))
-	b.WriteString(kvLine("PID", fmt.Sprintf("%d", l.BlockedPID)))
-	b.WriteString(kvLine("User", l.BlockedUser))
-	b.WriteString(kvLine("App", l.BlockedApp))
-	b.WriteString(kvLine("Query", ""))
-	b.WriteString(fmt.Sprintf("[#00D7FF]%s[-]\n", l.BlockedQuery))
-
-	// Blocker section
-	b.WriteString(separator("Blocker"))
-	b.WriteString(kvLine("PID", fmt.Sprintf("%d", l.BlockingPID)))
-	b.WriteString(kvLine("User", l.BlockingUser))
-	b.WriteString(kvLine("App", l.BlockingApp))
-	b.WriteString(kvLine("Query", ""))
-	b.WriteString(fmt.Sprintf("[#00D7FF]%s[-]\n", l.BlockingQuery))
-
-	// Footer
-	b.WriteString("\n[#808080][t] terminate blocker  [Esc] back[-]\n")
-
-	tv.SetText(b.String())
+	return layout
 }
 
 // NewTableDetailView creates a detail view for a table, loading data asynchronously.
-func NewTableDetailView(schema, name string, dbConn *db.DB, app *tview.Application) *tview.TextView {
-	tv := tview.NewTextView().
-		SetDynamicColors(true).
-		SetScrollable(true).
-		SetWordWrap(true)
-	tv.SetBackgroundColor(tcell.ColorDefault)
-	tv.SetBorder(false)
+func NewTableDetailView(schema, name string, dbConn *db.DB, app *tview.Application) *tview.Flex {
+	meta := newTextPane("Table Info")
+	columns := newTextPane("Columns")
+	indexes := newTextPane("Indexes")
 
-	tv.SetText(fmt.Sprintf("\n[#808080]Loading %s.%s...[-]", schema, name))
+	meta.SetText(fmt.Sprintf("[#808080]Loading %s.%s...[-]", schema, name))
+
+	colsAndIdx := tview.NewFlex().SetDirection(tview.FlexColumn).
+		AddItem(columns, 0, 2, false).
+		AddItem(indexes, 0, 1, false)
+	colsAndIdx.SetBackgroundColor(tcell.ColorDefault)
+
+	layout := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(meta, 12, 0, false).
+		AddItem(colsAndIdx, 0, 1, true)
+	layout.SetBackgroundColor(tcell.ColorDefault)
 
 	go func() {
 		detail, err := dbConn.GetTableDetail(context.Background(), schema, name)
 		if err != nil {
 			app.QueueUpdateDraw(func() {
-				tv.SetText(fmt.Sprintf("\n[#FF5F5F]Error: %s[-]", err.Error()))
+				meta.SetText(fmt.Sprintf("[#FF5F5F]Error: %s[-]", err.Error()))
 			})
 			return
 		}
 		app.QueueUpdateDraw(func() {
-			renderTableDetail(tv, detail)
+			renderTableMeta(meta, detail)
+			renderTableColumns(columns, detail)
+			renderTableIndexes(indexes, detail)
 		})
 	}()
 
-	return tv
+	return layout
 }
 
-func renderTableDetail(tv *tview.TextView, d *db.TableDetail) {
+func renderTableMeta(tv *tview.TextView, d *db.TableDetail) {
 	var b strings.Builder
-	b.WriteString("\n")
 	b.WriteString(kvLine("Table", fmt.Sprintf("%s.%s", d.Schema, d.Name)))
 	b.WriteString(kvLine("Size", formatSize(d.TotalSize)))
 	b.WriteString(kvLine("Rows", fmt.Sprintf("%d", d.LiveTuples)))
@@ -452,9 +483,11 @@ func renderTableDetail(tv *tview.TextView, d *db.TableDetail) {
 	b.WriteString(kvLine("Last Vacuum", timeAgo(d.LastVacuum)))
 	b.WriteString(kvLine("Last AutoVac", timeAgo(d.LastAutoVacuum)))
 	b.WriteString(kvLine("Last Analyze", timeAgo(d.LastAnalyze)))
+	tv.SetText(b.String())
+}
 
-	// Columns section
-	b.WriteString(separator("Columns"))
+func renderTableColumns(tv *tview.TextView, d *db.TableDetail) {
+	var b strings.Builder
 	b.WriteString(fmt.Sprintf("[#D78700]%-20s %-16s %-8s %-6s %s[-]\n", "NAME", "TYPE", "NULL", "PK", "DEFAULT"))
 	for _, c := range d.Columns {
 		nullable := "NO"
@@ -471,18 +504,18 @@ func renderTableDetail(tv *tview.TextView, d *db.TableDetail) {
 		}
 		b.WriteString(fmt.Sprintf("[white]%-20s %-16s %-8s %-6s %s[-]\n", c.Name, c.DataType, nullable, pk, defVal))
 	}
+	tv.SetText(b.String())
+}
 
-	// Indexes section
-	if len(d.Indexes) > 0 {
-		b.WriteString(separator("Indexes"))
-		b.WriteString(fmt.Sprintf("[#D78700]%-30s %10s %10s[-]\n", "NAME", "SCANS", "SIZE"))
-		for _, idx := range d.Indexes {
-			b.WriteString(fmt.Sprintf("[white]%-30s %10d %10s[-]\n", idx.IndexName, idx.Scans, formatSize(idx.Size)))
-		}
+func renderTableIndexes(tv *tview.TextView, d *db.TableDetail) {
+	if len(d.Indexes) == 0 {
+		tv.SetText("[#808080]No indexes[-]")
+		return
 	}
-
-	// Footer
-	b.WriteString("\n[#808080][Esc] back[-]\n")
-
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("[#D78700]%-30s %10s %10s[-]\n", "NAME", "SCANS", "SIZE"))
+	for _, idx := range d.Indexes {
+		b.WriteString(fmt.Sprintf("[white]%-30s %10d %10s[-]\n", idx.IndexName, idx.Scans, formatSize(idx.Size)))
+	}
 	tv.SetText(b.String())
 }
