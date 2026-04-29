@@ -3,14 +3,11 @@ package views
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/fraser-isbester/tusk/internal/db"
-	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
 
 const queriesRefreshInterval = 2 * time.Second
@@ -37,6 +34,7 @@ type Queries struct {
 	height      int
 	paused      bool
 	filterValue string
+	userFilter  string // when set, only show queries from this user
 	queries     []db.ActiveQuery
 	statusMsg   string
 	err         error
@@ -45,22 +43,18 @@ type Queries struct {
 // NewQueries creates a new Queries view.
 func NewQueries(database *db.DB) *Queries {
 	cols := []table.Column{
-		{Title: "PID", Width: 8},
-		{Title: "User", Width: 12},
-		{Title: "App", Width: 14},
-		{Title: "State", Width: 10},
-		{Title: "Wait", Width: 14},
-		{Title: "Duration", Width: 10},
-		{Title: "Query", Width: 40},
+		{Title: "PID", Width: 6},
+		{Title: "USER", Width: 10},
+		{Title: "APP", Width: 18},
+		{Title: "STATE", Width: 8},
+		{Title: "WAIT", Width: 18},
+		{Title: "DURATION", Width: 8},
 	}
-
 	t := table.New(
 		table.WithColumns(cols),
 		table.WithFocused(true),
 	)
-
 	t.SetStyles(defaultTableStyles())
-
 	return &Queries{
 		db:    database,
 		table: t,
@@ -72,11 +66,16 @@ func (q *Queries) SetSize(w, h int) {
 	q.width = w
 	q.height = h
 	q.table.SetWidth(w)
-	q.table.SetHeight(h - 4) // leave room for status line
+	q.table.SetHeight(h - 2)
 }
 
 // ItemCount returns the number of queries.
 func (q *Queries) ItemCount() int { return len(q.queries) }
+
+// SetUserFilter pre-filters the view to only show queries from the given user.
+func (q *Queries) SetUserFilter(user string) {
+	q.userFilter = user
+}
 
 // SelectedQuery returns the active query matching the currently selected table row.
 func (q *Queries) SelectedQuery() (db.ActiveQuery, bool) {
@@ -153,29 +152,23 @@ func (q *Queries) View() string {
 }
 
 func (q *Queries) updateRows() {
-	greenStyle := lipgloss.NewStyle().Foreground(theme.ColorGreen)
-	yellowStyle := lipgloss.NewStyle().Foreground(theme.ColorYellow)
-	redStyle := lipgloss.NewStyle().Foreground(theme.ColorRed)
-
 	var rows []table.Row
 	for _, aq := range q.queries {
+		// Skip queries not matching user filter.
+		if q.userFilter != "" && aq.User != q.userFilter {
+			continue
+		}
 		pid := fmt.Sprintf("%d", aq.PID)
 		wait := aq.WaitEventType
 		if aq.WaitEvent != "" {
 			wait += ":" + aq.WaitEvent
 		}
-		durStr := formatDuration(aq.Duration)
-		switch {
-		case aq.Duration >= 5*time.Second:
-			durStr = redStyle.Render(durStr)
-		case aq.Duration >= time.Second:
-			durStr = yellowStyle.Render(durStr)
-		default:
-			durStr = greenStyle.Render(durStr)
+		durStr := ""
+		if aq.Duration > 0 {
+			durStr = formatDuration(aq.Duration)
 		}
-		queryPreview := truncate(strings.ReplaceAll(aq.Query, "\n", " "), 60)
 
-		row := table.Row{pid, aq.User, aq.AppName, aq.State, wait, durStr, queryPreview}
+		row := table.Row{pid, aq.User, aq.AppName, aq.State, wait, durStr}
 		if q.filterValue == "" || rowContains(row, q.filterValue) {
 			rows = append(rows, row)
 		}

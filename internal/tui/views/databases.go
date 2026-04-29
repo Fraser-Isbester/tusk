@@ -59,7 +59,7 @@ func (v *Databases) SetSize(w, h int) {
 	v.width = w
 	v.height = h
 	v.table.SetWidth(w)
-	v.table.SetHeight(h - 4)
+	v.table.SetHeight(h - 2)
 }
 
 // ItemCount returns the number of databases.

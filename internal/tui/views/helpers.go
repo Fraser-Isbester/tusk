@@ -28,7 +28,12 @@ func formatSize(bytes int64) string {
 	}
 }
 
-// formatDuration formats a duration into a concise human-readable string.
+// FormatDuration formats a duration into a concise human-readable string.
+// Exported for use by the app-level header.
+func FormatDuration(d time.Duration) string {
+	return formatDuration(d)
+}
+
 func formatDuration(d time.Duration) string {
 	if d < time.Second {
 		return fmt.Sprintf("%dms", d.Milliseconds())

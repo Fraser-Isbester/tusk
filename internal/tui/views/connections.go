@@ -60,11 +60,20 @@ func (v *Connections) SetSize(w, h int) {
 	v.width = w
 	v.height = h
 	v.table.SetWidth(w)
-	v.table.SetHeight(h - 4)
+	v.table.SetHeight(h - 2)
 }
 
 // ItemCount returns the number of connection groups.
 func (v *Connections) ItemCount() int { return len(v.conns) }
+
+// SelectedUser returns the username from the currently selected row.
+func (v *Connections) SelectedUser() (string, bool) {
+	row := v.table.SelectedRow()
+	if row == nil || row[0] == "" {
+		return "", false
+	}
+	return row[0], true
+}
 
 // Init starts the first data fetch.
 func (v *Connections) Init() tea.Cmd {
