@@ -18,10 +18,12 @@ type Queries struct {
 	table        *tview.Table
 	db           *db.DB
 	queries      []db.ActiveQuery
+	completed    []db.ActiveQuery // recently finished queries shown in grey
 	visibleData  []db.ActiveQuery
 	userFilter   string
 	filterText   string
 	queryHistory *db.QueryHistory
+	prevPIDs     map[int]db.ActiveQuery // previous poll's active queries
 	mu           sync.Mutex
 	ticker       *time.Ticker
 	done         chan struct{}
@@ -119,7 +121,41 @@ func (v *Queries) refresh() {
 	if v.queryHistory != nil {
 		v.queryHistory.RecordAll(queries)
 	}
+
+	// Build set of currently active PIDs
+	currentPIDs := make(map[int]bool)
+	for _, q := range queries {
+		if q.State == "active" {
+			currentPIDs[q.PID] = true
+		}
+	}
+
 	v.mu.Lock()
+
+	// Detect queries that were active last poll but aren't anymore → completed
+	if v.prevPIDs != nil {
+		for pid, prev := range v.prevPIDs {
+			if !currentPIDs[pid] && prev.User != "(system)" {
+				prev.State = "completed"
+				prev.Duration = 0
+				v.completed = append(v.completed, prev)
+			}
+		}
+	}
+
+	// Keep only the last 20 completed entries
+	if len(v.completed) > 20 {
+		v.completed = v.completed[len(v.completed)-20:]
+	}
+
+	// Store current active queries for next comparison
+	v.prevPIDs = make(map[int]db.ActiveQuery)
+	for _, q := range queries {
+		if q.State == "active" {
+			v.prevPIDs[q.PID] = q
+		}
+	}
+
 	v.queries = queries
 	v.mu.Unlock()
 }
@@ -207,6 +243,41 @@ func (v *Queries) render() {
 
 		stmtCount := countStatements(q.Query)
 		v.table.SetCell(row, 6, tview.NewTableCell(fmt.Sprintf("%d", stmtCount)).SetTextColor(color))
+		row++
+	}
+
+	// Render completed queries in grey below active ones
+	for _, q := range v.completed {
+		if v.userFilter != "" && q.User != v.userFilter {
+			continue
+		}
+
+		pid := fmt.Sprintf("%d", q.PID)
+		if v.filterText != "" {
+			match := false
+			searchText := strings.ToLower(v.filterText)
+			for _, val := range []string{pid, q.User, q.AppName, "completed"} {
+				if strings.Contains(strings.ToLower(val), searchText) {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+
+		v.visibleData = append(v.visibleData, q)
+		grey := theme.ColorDim
+
+		v.table.SetCell(row, 0, tview.NewTableCell(pid).SetTextColor(grey))
+		v.table.SetCell(row, 1, tview.NewTableCell(q.User).SetTextColor(grey))
+		v.table.SetCell(row, 2, tview.NewTableCell(q.AppName).SetTextColor(grey).SetExpansion(1))
+		v.table.SetCell(row, 3, tview.NewTableCell("completed").SetTextColor(grey))
+		v.table.SetCell(row, 4, tview.NewTableCell("").SetTextColor(grey).SetExpansion(1))
+		v.table.SetCell(row, 5, tview.NewTableCell("").SetTextColor(grey))
+		stmtCount := countStatements(q.Query)
+		v.table.SetCell(row, 6, tview.NewTableCell(fmt.Sprintf("%d", stmtCount)).SetTextColor(grey))
 		row++
 	}
 
