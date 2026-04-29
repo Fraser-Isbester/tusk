@@ -234,40 +234,155 @@ PIDS+=($!)
 ) &
 PIDS+=($!)
 
-# ── 11. SQLcommentor queries — visible in query detail ────────────────
-echo "[+] SQLcommentor-annotated queries..."
-(
-    run_until "$END" psql "$DB" -c "
-        SET application_name = 'web-api';
-        SELECT * FROM app.users WHERE id = 1
-        /*app='user-service',route='/api/v1/users',controller='UserController',action='show'*/;
-        SELECT pg_sleep(0.5);
-    " > /dev/null
-) &
-PIDS+=($!)
+# ── 11. SQLcommentor queries — rich tags visible in query detail ───────
+echo "[+] SQLcommentor-annotated queries (6 services)..."
 
+# User service — CRUD operations
 (
     run_until "$END" psql "$DB" -c "
-        SET application_name = 'web-api';
-        SELECT o.*, u.name FROM app.orders o JOIN app.users u ON u.id = o.user_id WHERE o.id = (random()*7+1)::int
-        /*app='order-service',route='/api/v1/orders/:id',controller='OrderController',action='show'*/;
+        SET application_name = 'user-service';
+        SELECT * FROM app.users WHERE id = (random()*4+1)::int
+        /*app='user-service',route='/api/v1/users/:id',controller='UserController',action='show',framework='gin'*/;
         SELECT pg_sleep(0.3);
     " > /dev/null
 ) &
 PIDS+=($!)
 
-# ── 12. Temp table and cursor usage ───────────────────────────────────
-echo "[+] Temp table / cursor patterns..."
+(
+    run_until "$END" psql "$DB" -c "
+        SET application_name = 'user-service';
+        SELECT * FROM app.users ORDER BY created_at DESC LIMIT 20
+        /*app='user-service',route='/api/v1/users',controller='UserController',action='index',framework='gin'*/;
+        SELECT pg_sleep(0.2);
+    " > /dev/null
+) &
+PIDS+=($!)
+
+# Order service — multi-table joins
+(
+    run_until "$END" psql "$DB" -c "
+        SET application_name = 'order-service';
+        SELECT o.*, u.name, u.email FROM app.orders o
+        JOIN app.users u ON u.id = o.user_id
+        WHERE o.id = (random()*7+1)::int
+        /*app='order-service',route='/api/v1/orders/:id',controller='OrderController',action='show',framework='gin'*/;
+        SELECT pg_sleep(0.3);
+    " > /dev/null
+) &
+PIDS+=($!)
+
+(
+    run_until "$END" psql "$DB" -c "
+        SET application_name = 'order-service';
+        SELECT o.id, o.status, o.total_cents, count(oi.id) as items
+        FROM app.orders o
+        JOIN app.order_items oi ON oi.order_id = o.id
+        WHERE o.user_id = (random()*4+1)::int
+        GROUP BY o.id, o.status, o.total_cents
+        /*app='order-service',route='/api/v1/users/:id/orders',controller='OrderController',action='by_user',framework='gin'*/;
+        SELECT pg_sleep(0.4);
+    " > /dev/null
+) &
+PIDS+=($!)
+
+# Analytics service — heavy aggregations
+(
+    run_until "$END" psql "$DB" -c "
+        SET application_name = 'analytics-api';
+        SELECT date_trunc('hour', created_at) AS hour, event_type, count(*)
+        FROM analytics.events
+        WHERE created_at > now() - interval '24 hours'
+        GROUP BY hour, event_type
+        ORDER BY hour DESC
+        /*app='analytics-service',route='/api/v1/analytics/events',controller='AnalyticsController',action='hourly_breakdown',framework='fastapi'*/;
+        SELECT pg_sleep(1);
+    " > /dev/null
+) &
+PIDS+=($!)
+
+# Search service — text matching
+(
+    run_until "$END" psql "$DB" -c "
+        SET application_name = 'search-service';
+        SELECT p.id, p.name, p.price_cents, p.category
+        FROM app.products p
+        WHERE p.name ILIKE '%widget%' OR p.category = 'gadgets'
+        /*app='search-service',route='/api/v1/search',controller='SearchController',action='query',framework='express'*/;
+        SELECT pg_sleep(0.2);
+    " > /dev/null
+) &
+PIDS+=($!)
+
+# Notification service — multi-step transaction with tags
+(
+    run_until "$END" psql "$DB" <<SQL > /dev/null 2>&1
+SET application_name = 'notification-service';
+BEGIN;
+SELECT * FROM app.users WHERE id = (random()*4+1)::int
+/*app='notification-service',route='/internal/notify',controller='NotificationWorker',action='send_email'*/;
+INSERT INTO analytics.events (event_type, user_id, payload)
+VALUES ('email_sent', (random()*4+1)::int, '{"template": "welcome"}')
+/*app='notification-service',route='/internal/notify',controller='NotificationWorker',action='log_event'*/;
+SELECT pg_sleep(1);
+COMMIT;
+SQL
+    sleep 1
+) &
+PIDS+=($!)
+
+# ── 12. Multi-statement transactions (visible in STMTS/QUERIES columns) ──
+echo "[+] Multi-statement transactions..."
+
+# Checkout flow — 5-step transaction
+(
+    run_until "$END" psql "$DB" <<SQL > /dev/null 2>&1
+SET application_name = 'checkout-flow';
+BEGIN;
+SELECT * FROM app.users WHERE id = (random()*4+1)::int;
+SELECT pg_sleep(0.5);
+SELECT * FROM app.products WHERE id = (random()*4+1)::int;
+SELECT pg_sleep(0.5);
+UPDATE app.orders SET status = 'processing' WHERE id = (random()*7+1)::int;
+SELECT pg_sleep(0.5);
+INSERT INTO analytics.events (event_type, user_id) VALUES ('checkout_started', (random()*4+1)::int);
+SELECT pg_sleep(0.5);
+UPDATE app.orders SET status = 'completed' WHERE id = (random()*7+1)::int;
+COMMIT;
+SQL
+    sleep 1
+) &
+PIDS+=($!)
+
+# ETL pipeline — temp tables and bulk operations
 (
     run_until "$END" psql "$DB" <<SQL > /dev/null 2>&1
 SET application_name = 'etl-pipeline';
 BEGIN;
 CREATE TEMP TABLE IF NOT EXISTS staging_events (LIKE analytics.events INCLUDING ALL) ON COMMIT DROP;
 INSERT INTO staging_events SELECT * FROM analytics.events ORDER BY random() LIMIT 100;
-SELECT pg_sleep(2);
+SELECT pg_sleep(1);
+SELECT count(*) FROM staging_events;
+SELECT pg_sleep(1);
 COMMIT;
 SQL
     sleep 1
+) &
+PIDS+=($!)
+
+# Data sync — read from multiple tables then write
+(
+    run_until "$END" psql "$DB" <<SQL > /dev/null 2>&1
+SET application_name = 'data-sync';
+BEGIN;
+SELECT count(*) FROM app.users;
+SELECT count(*) FROM app.orders;
+SELECT count(*) FROM app.products;
+SELECT pg_sleep(0.5);
+INSERT INTO analytics.events (event_type, user_id, payload)
+VALUES ('sync_complete', 1, '{"tables": 3}');
+COMMIT;
+SQL
+    sleep 2
 ) &
 PIDS+=($!)
 
