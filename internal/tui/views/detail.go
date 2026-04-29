@@ -261,6 +261,12 @@ func renderQueryDetail(tv *tview.TextView, q db.ActiveQuery, history *db.QueryHi
 
 	b.WriteString(kvLineColored("Duration", formatDuration(q.Duration), durationColor(q.Duration)))
 
+	// Statement count
+	stmts := countStatements(q.Query)
+	if stmts > 1 {
+		b.WriteString(kvLine("Statements", fmt.Sprintf("%d", stmts)))
+	}
+
 	// SQLcommentor tags — parse from query text, merge across statements.
 	comment := mergeComments(q.Query)
 	// Also merge with pre-parsed comment on the ActiveQuery.

@@ -153,13 +153,8 @@ func (v *Transactions) render() {
 
 		v.table.SetCell(row, 5, tview.NewTableCell(formatDuration(txn.QueryDuration)).SetTextColor(rowColor))
 
-		queryCount := "1"
-		if v.queryHistory != nil {
-			if entries := v.queryHistory.Get(txn.PID); len(entries) > 0 {
-				queryCount = fmt.Sprintf("%d", len(entries))
-			}
-		}
-		v.table.SetCell(row, 6, tview.NewTableCell(queryCount).SetTextColor(rowColor))
+		queryCount := countStatements(txn.Query)
+		v.table.SetCell(row, 6, tview.NewTableCell(fmt.Sprintf("%d", queryCount)).SetTextColor(rowColor))
 		row++
 	}
 
