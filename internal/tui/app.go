@@ -93,6 +93,10 @@ func NewApp(database *db.DB, profileName, profileColor string, readonly bool) *A
 	a.views["connections"] = views.NewConnections(database)
 	a.views["db"] = views.NewDatabases(database)
 	a.views["roles"] = views.NewRoles(database)
+	a.views["slow"] = views.NewSlowQueries(database)
+	a.views["transactions"] = views.NewTransactions(database)
+	a.views["locks"] = views.NewLocks(database)
+	a.views["indexes"] = views.NewIndexes(database)
 
 	a.activeView = "queries"
 
@@ -258,6 +262,11 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				qv.SetSize(a.width, a.height-6)
 				a.views["queries-filtered"] = qv
 				return a, a.switchView("queries-filtered")
+			}
+		case *views.Transactions:
+			if q, ok := v.SelectedQuery(); ok {
+				a.views["query-detail"] = views.NewQueryDetail(q)
+				return a, a.switchView("query-detail")
 			}
 		}
 	}
@@ -520,6 +529,14 @@ func (a *App) viewItemCount() int {
 	case *views.Databases:
 		return v.ItemCount()
 	case *views.Roles:
+		return v.ItemCount()
+	case *views.SlowQueries:
+		return v.ItemCount()
+	case *views.Transactions:
+		return v.ItemCount()
+	case *views.Locks:
+		return v.ItemCount()
+	case *views.Indexes:
 		return v.ItemCount()
 	}
 	return 0

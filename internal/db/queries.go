@@ -96,6 +96,57 @@ FROM pg_roles
 ORDER BY rolname
 `
 
+const queryCheckPgStatStatements = `SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements'`
+
+const querySlowQueries = `
+SELECT queryid, left(query, 200), calls, total_exec_time, mean_exec_time,
+       rows,
+       CASE WHEN shared_blks_hit + shared_blks_read = 0 THEN 0
+            ELSE round(shared_blks_hit::numeric / (shared_blks_hit + shared_blks_read), 4)
+       END AS hit_ratio
+FROM pg_stat_statements
+WHERE userid <> 0
+ORDER BY total_exec_time DESC
+LIMIT 50
+`
+
+const queryTransactions = `
+SELECT pid, COALESCE(usename, '(system)'), COALESCE(application_name, ''),
+       COALESCE(state, ''),
+       COALESCE(EXTRACT(EPOCH FROM (now() - xact_start)), 0),
+       COALESCE(EXTRACT(EPOCH FROM (now() - query_start)), 0),
+       COALESCE(query, '')
+FROM pg_stat_activity
+WHERE xact_start IS NOT NULL AND pid <> pg_backend_pid()
+ORDER BY xact_start ASC
+`
+
+const queryLocks = `
+SELECT blocked.pid, blocking.pid,
+       COALESCE(ba.usename, ''), COALESCE(bka.usename, ''),
+       COALESCE(ba.application_name, ''), COALESCE(bka.application_name, ''),
+       blocked.locktype, blocked.mode,
+       COALESCE(EXTRACT(EPOCH FROM (now() - ba.query_start)), 0),
+       COALESCE(left(ba.query, 200), ''), COALESCE(left(bka.query, 200), '')
+FROM pg_locks blocked
+JOIN pg_locks blocking ON blocking.locktype = blocked.locktype
+  AND blocking.database IS NOT DISTINCT FROM blocked.database
+  AND blocking.relation IS NOT DISTINCT FROM blocked.relation
+  AND blocking.page IS NOT DISTINCT FROM blocked.page
+  AND blocking.tuple IS NOT DISTINCT FROM blocked.tuple
+  AND blocking.pid <> blocked.pid
+JOIN pg_stat_activity ba ON ba.pid = blocked.pid
+JOIN pg_stat_activity bka ON bka.pid = blocking.pid
+WHERE NOT blocked.granted
+`
+
+const queryIndexes = `
+SELECT schemaname, relname, indexrelname, idx_scan, idx_tup_read, idx_tup_fetch,
+       pg_relation_size(indexrelid)
+FROM pg_stat_user_indexes
+ORDER BY idx_scan ASC
+`
+
 const queryCancelBackend = `SELECT pg_cancel_backend($1)`
 const queryTerminateBackend = `SELECT pg_terminate_backend($1)`
 
@@ -169,6 +220,7 @@ func (d *DB) GetActiveQueries(ctx context.Context) ([]ActiveQuery, error) {
 			return nil, fmt.Errorf("scanning active query row: %w", err)
 		}
 		q.Duration = time.Duration(durationSec * float64(time.Second))
+		q.Comment = ParseSQLComment(q.Query)
 		queries = append(queries, q)
 	}
 	if err := rows.Err(); err != nil {
@@ -290,6 +342,147 @@ func (d *DB) GetRoles(ctx context.Context) ([]RoleInfo, error) {
 		return nil, fmt.Errorf("iterating role rows: %w", err)
 	}
 	return roles, nil
+}
+
+// GetSlowQueries returns the top 50 queries by total execution time from
+// pg_stat_statements. Returns an empty slice if the extension is not installed.
+func (d *DB) GetSlowQueries(ctx context.Context) ([]SlowQuery, error) {
+	var exists int
+	err := d.pool.QueryRow(ctx, queryCheckPgStatStatements).Scan(&exists)
+	if err != nil {
+		return []SlowQuery{}, nil
+	}
+
+	rows, err := d.pool.Query(ctx, querySlowQueries)
+	if err != nil {
+		return nil, fmt.Errorf("querying slow queries: %w", err)
+	}
+	defer rows.Close()
+
+	var queries []SlowQuery
+	for rows.Next() {
+		var q SlowQuery
+		if err := rows.Scan(
+			&q.QueryID,
+			&q.Query,
+			&q.Calls,
+			&q.TotalTime,
+			&q.MeanTime,
+			&q.Rows,
+			&q.HitRatio,
+		); err != nil {
+			return nil, fmt.Errorf("scanning slow query row: %w", err)
+		}
+		queries = append(queries, q)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating slow query rows: %w", err)
+	}
+	return queries, nil
+}
+
+// GetTransactions returns all active transactions from pg_stat_activity.
+func (d *DB) GetTransactions(ctx context.Context) ([]Transaction, error) {
+	rows, err := d.pool.Query(ctx, queryTransactions)
+	if err != nil {
+		return nil, fmt.Errorf("querying transactions: %w", err)
+	}
+	defer rows.Close()
+
+	var txns []Transaction
+	for rows.Next() {
+		var (
+			t            Transaction
+			xactSec      float64
+			querySec     float64
+		)
+		if err := rows.Scan(
+			&t.PID,
+			&t.User,
+			&t.AppName,
+			&t.State,
+			&xactSec,
+			&querySec,
+			&t.Query,
+		); err != nil {
+			return nil, fmt.Errorf("scanning transaction row: %w", err)
+		}
+		t.XactDuration = time.Duration(xactSec * float64(time.Second))
+		t.QueryDuration = time.Duration(querySec * float64(time.Second))
+		txns = append(txns, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating transaction rows: %w", err)
+	}
+	return txns, nil
+}
+
+// GetLocks returns information about blocked locks and their blockers.
+func (d *DB) GetLocks(ctx context.Context) ([]LockInfo, error) {
+	rows, err := d.pool.Query(ctx, queryLocks)
+	if err != nil {
+		return nil, fmt.Errorf("querying locks: %w", err)
+	}
+	defer rows.Close()
+
+	var locks []LockInfo
+	for rows.Next() {
+		var (
+			l       LockInfo
+			waitSec float64
+		)
+		if err := rows.Scan(
+			&l.BlockedPID,
+			&l.BlockingPID,
+			&l.BlockedUser,
+			&l.BlockingUser,
+			&l.BlockedApp,
+			&l.BlockingApp,
+			&l.LockType,
+			&l.Mode,
+			&waitSec,
+			&l.BlockedQuery,
+			&l.BlockingQuery,
+		); err != nil {
+			return nil, fmt.Errorf("scanning lock row: %w", err)
+		}
+		l.WaitDuration = time.Duration(waitSec * float64(time.Second))
+		locks = append(locks, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating lock rows: %w", err)
+	}
+	return locks, nil
+}
+
+// GetIndexes returns per-index statistics from pg_stat_user_indexes.
+func (d *DB) GetIndexes(ctx context.Context) ([]IndexInfo, error) {
+	rows, err := d.pool.Query(ctx, queryIndexes)
+	if err != nil {
+		return nil, fmt.Errorf("querying indexes: %w", err)
+	}
+	defer rows.Close()
+
+	var indexes []IndexInfo
+	for rows.Next() {
+		var idx IndexInfo
+		if err := rows.Scan(
+			&idx.Schema,
+			&idx.Table,
+			&idx.IndexName,
+			&idx.Scans,
+			&idx.TupRead,
+			&idx.TupFetch,
+			&idx.Size,
+		); err != nil {
+			return nil, fmt.Errorf("scanning index row: %w", err)
+		}
+		indexes = append(indexes, idx)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating index rows: %w", err)
+	}
+	return indexes, nil
 }
 
 // CancelQuery sends pg_cancel_backend for the given PID.

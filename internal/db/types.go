@@ -29,6 +29,7 @@ type ActiveQuery struct {
 	WaitEvent     string
 	Duration      time.Duration
 	Query         string
+	Comment       SQLComment
 }
 
 // ConnectionGroup is an aggregated view of connections sharing the same
@@ -68,4 +69,52 @@ type TableInfo struct {
 	IdxScan        int64
 	LastVacuum     *time.Time
 	LastAutoVacuum *time.Time
+}
+
+// SlowQuery holds a row from pg_stat_statements ordered by total execution time.
+type SlowQuery struct {
+	QueryID   int64
+	Query     string
+	Calls     int64
+	TotalTime float64
+	MeanTime  float64
+	Rows      int64
+	HitRatio  float64
+}
+
+// Transaction represents an active transaction from pg_stat_activity.
+type Transaction struct {
+	PID           int
+	User          string
+	AppName       string
+	State         string
+	XactDuration  time.Duration
+	QueryDuration time.Duration
+	Query         string
+}
+
+// LockInfo describes a blocked lock and the backend blocking it.
+type LockInfo struct {
+	BlockedPID    int
+	BlockingPID   int
+	BlockedUser   string
+	BlockingUser  string
+	BlockedApp    string
+	BlockingApp   string
+	LockType      string
+	Mode          string
+	WaitDuration  time.Duration
+	BlockedQuery  string
+	BlockingQuery string
+}
+
+// IndexInfo holds per-index statistics from pg_stat_user_indexes.
+type IndexInfo struct {
+	Schema    string
+	Table     string
+	IndexName string
+	Scans     int64
+	TupRead   int64
+	TupFetch  int64
+	Size      int64
 }

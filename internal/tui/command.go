@@ -24,6 +24,10 @@ func NewCommandRegistry() *CommandRegistry {
 			{Name: "connections", Aliases: []string{"conn", "conns"}, ViewName: "connections"},
 			{Name: "db", Aliases: []string{"database", "databases"}, ViewName: "db"},
 			{Name: "roles", Aliases: []string{"role", "users"}, ViewName: "roles"},
+			{Name: "slow", Aliases: []string{"slowqueries"}, ViewName: "slow"},
+			{Name: "transactions", Aliases: []string{"txn", "tx"}, ViewName: "transactions"},
+			{Name: "locks", Aliases: []string{"lock"}, ViewName: "locks"},
+			{Name: "indexes", Aliases: []string{"idx", "index"}, ViewName: "indexes"},
 		},
 	}
 }
