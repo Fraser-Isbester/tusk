@@ -133,20 +133,65 @@ for i in 1 2 3; do
     sleep 3  # stagger so they have different ages
 done
 
-# ── 6. Multi-statement transaction — txn age != query age ────────────
-echo "[+] Multi-statement transactions..."
+# ── 6. Multi-statement transactions — each statement sent separately ──
+# so pg_stat_activity.query changes between polls and Tusk's query
+# history captures each one individually.
+echo "[+] Multi-statement transactions (3 workers)..."
+
+# Order workflow: 4 distinct queries in one transaction
 (
-    run_until "$END" psql "$DB" <<SQL > /dev/null 2>&1
-SET application_name = 'order-workflow';
-BEGIN;
-UPDATE app.orders SET status = 'processing' WHERE id = (random()*7+1)::int;
-SELECT pg_sleep(2);
-UPDATE app.orders SET status = 'completed' WHERE id = (random()*7+1)::int;
-SELECT pg_sleep(1);
-INSERT INTO analytics.events (event_type, user_id, payload)
-    VALUES ('order_complete', (random()*4+1)::int, '{"step": "final"}');
-COMMIT;
-SQL
+    run_until "$END" bash -c '{
+        echo "SET application_name = '\''order-workflow'\'';"
+        echo "BEGIN;"
+        sleep 0.5
+        echo "SELECT * FROM app.users WHERE id = (random()*4+1)::int;"
+        sleep 3
+        echo "UPDATE app.orders SET status = '\''processing'\'' WHERE id = (random()*7+1)::int;"
+        sleep 3
+        echo "INSERT INTO analytics.events (event_type, user_id, payload) VALUES ('\''order_complete'\'', (random()*4+1)::int, '\''{}'\''::jsonb);"
+        sleep 3
+        echo "UPDATE app.orders SET status = '\''completed'\'' WHERE id = (random()*7+1)::int;"
+        sleep 2
+        echo "COMMIT;"
+    } | psql "$0" > /dev/null 2>&1' "$DB"
+) &
+PIDS+=($!)
+
+# Payment processing: 3 queries with longer sleeps
+(
+    run_until "$END" bash -c '{
+        echo "SET application_name = '\''payment-processor'\'';"
+        echo "BEGIN;"
+        sleep 1
+        echo "SELECT * FROM app.orders WHERE status = '\''processing'\'' LIMIT 1;"
+        sleep 4
+        echo "UPDATE app.products SET inventory = inventory - 1 WHERE id = (random()*4+1)::int;"
+        sleep 4
+        echo "INSERT INTO analytics.events (event_type, user_id) VALUES ('\''payment_processed'\'', (random()*4+1)::int);"
+        sleep 3
+        echo "COMMIT;"
+    } | psql "$0" > /dev/null 2>&1' "$DB"
+) &
+PIDS+=($!)
+
+# Inventory sync: 5 queries stepping through tables
+(
+    run_until "$END" bash -c '{
+        echo "SET application_name = '\''inventory-sync'\'';"
+        echo "BEGIN;"
+        sleep 1
+        echo "SELECT count(*) FROM app.products;"
+        sleep 2
+        echo "SELECT count(*) FROM app.orders WHERE status = '\''pending'\'';"
+        sleep 2
+        echo "SELECT count(*) FROM app.order_items;"
+        sleep 2
+        echo "UPDATE app.products SET inventory = (random()*500)::int WHERE id = (random()*4+1)::int;"
+        sleep 2
+        echo "INSERT INTO analytics.events (event_type, user_id) VALUES ('\''inventory_synced'\'', 1);"
+        sleep 2
+        echo "COMMIT;"
+    } | psql "$0" > /dev/null 2>&1' "$DB"
 ) &
 PIDS+=($!)
 
@@ -330,58 +375,63 @@ SQL
 ) &
 PIDS+=($!)
 
-# ── 12. Multi-statement transactions (visible in STMTS/QUERIES columns) ──
-echo "[+] Multi-statement transactions..."
+# ── 12. More multi-query transactions (sent one statement at a time) ──
+echo "[+] Multi-query transactions (slow, observable)..."
 
-# Checkout flow — 5-step transaction
+# Checkout flow — 4 distinct queries, each visible to Tusk for 3s
 (
-    run_until "$END" psql "$DB" <<SQL > /dev/null 2>&1
-SET application_name = 'checkout-flow';
-BEGIN;
-SELECT * FROM app.users WHERE id = (random()*4+1)::int;
-SELECT pg_sleep(0.5);
-SELECT * FROM app.products WHERE id = (random()*4+1)::int;
-SELECT pg_sleep(0.5);
-UPDATE app.orders SET status = 'processing' WHERE id = (random()*7+1)::int;
-SELECT pg_sleep(0.5);
-INSERT INTO analytics.events (event_type, user_id) VALUES ('checkout_started', (random()*4+1)::int);
-SELECT pg_sleep(0.5);
-UPDATE app.orders SET status = 'completed' WHERE id = (random()*7+1)::int;
-COMMIT;
-SQL
-    sleep 1
+    run_until "$END" bash -c '{
+        echo "SET application_name = '\''checkout-flow'\'';"
+        echo "BEGIN;"
+        sleep 1
+        echo "SELECT * FROM app.users WHERE id = (random()*4+1)::int;"
+        sleep 3
+        echo "SELECT * FROM app.products WHERE id = (random()*4+1)::int;"
+        sleep 3
+        echo "UPDATE app.orders SET status = '\''processing'\'' WHERE id = (random()*7+1)::int;"
+        sleep 3
+        echo "UPDATE app.orders SET status = '\''completed'\'' WHERE id = (random()*7+1)::int;"
+        sleep 2
+        echo "COMMIT;"
+    } | psql "$0" > /dev/null 2>&1' "$DB"
 ) &
 PIDS+=($!)
 
-# ETL pipeline — temp tables and bulk operations
+# ETL pipeline — 3 distinct queries
 (
-    run_until "$END" psql "$DB" <<SQL > /dev/null 2>&1
-SET application_name = 'etl-pipeline';
-BEGIN;
-CREATE TEMP TABLE IF NOT EXISTS staging_events (LIKE analytics.events INCLUDING ALL) ON COMMIT DROP;
-INSERT INTO staging_events SELECT * FROM analytics.events ORDER BY random() LIMIT 100;
-SELECT pg_sleep(1);
-SELECT count(*) FROM staging_events;
-SELECT pg_sleep(1);
-COMMIT;
-SQL
-    sleep 1
+    run_until "$END" bash -c '{
+        echo "SET application_name = '\''etl-pipeline'\'';"
+        echo "BEGIN;"
+        sleep 1
+        echo "CREATE TEMP TABLE IF NOT EXISTS staging (LIKE analytics.events INCLUDING ALL) ON COMMIT DROP;"
+        sleep 3
+        echo "INSERT INTO staging SELECT * FROM analytics.events ORDER BY random() LIMIT 100;"
+        sleep 3
+        echo "SELECT count(*) FROM staging;"
+        sleep 3
+        echo "COMMIT;"
+    } | psql "$0" > /dev/null 2>&1' "$DB"
 ) &
 PIDS+=($!)
 
-# Data sync — read from multiple tables then write
+# Data sync — 4 distinct queries
 (
-    run_until "$END" psql "$DB" <<SQL > /dev/null 2>&1
-SET application_name = 'data-sync';
-BEGIN;
-SELECT count(*) FROM app.users;
-SELECT count(*) FROM app.orders;
-SELECT count(*) FROM app.products;
-SELECT pg_sleep(0.5);
-INSERT INTO analytics.events (event_type, user_id, payload)
-VALUES ('sync_complete', 1, '{"tables": 3}');
-COMMIT;
-SQL
+    run_until "$END" bash -c '{
+        echo "SET application_name = '\''data-sync'\'';"
+        echo "BEGIN;"
+        sleep 1
+        echo "SELECT count(*) FROM app.users;"
+        sleep 3
+        echo "SELECT count(*) FROM app.orders;"
+        sleep 3
+        echo "SELECT count(*) FROM app.products;"
+        sleep 3
+        echo "INSERT INTO analytics.events (event_type, user_id, payload) VALUES ('\''sync_complete'\'', 1, '\''{}'\''::jsonb);"
+        sleep 2
+        echo "COMMIT;"
+    } | psql "$0" > /dev/null 2>&1' "$DB"
+) &
+PIDS+=($!)
     sleep 2
 ) &
 PIDS+=($!)
