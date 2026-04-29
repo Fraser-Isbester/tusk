@@ -2,6 +2,16 @@ package db
 
 import "time"
 
+// ResourceBase contains fields shared across all pg_stat_activity-derived resources.
+type ResourceBase struct {
+	PID        int
+	User       string
+	App        string
+	Database   string
+	ClientAddr string
+	State      string
+}
+
 // ServerInfo holds high-level PostgreSQL server metadata.
 type ServerInfo struct {
 	Version        string
@@ -18,29 +28,25 @@ type DatabaseStats struct {
 	CacheHitRatio float64
 }
 
-// ActiveQuery represents a single in-flight backend from pg_stat_activity.
-type ActiveQuery struct {
-	PID           int
-	User          string
-	AppName       string
-	ClientAddr    string
-	State         string
+// Query represents a single in-flight backend from pg_stat_activity.
+type Query struct {
+	ResourceBase
+	Duration      time.Duration
 	WaitEventType string
 	WaitEvent     string
-	Duration      time.Duration
-	Query         string
+	QueryText     string
 	Comment       SQLComment
-	BlockedBy     int   // PID blocking this query, 0 if not blocked
-	QueryID       int64 // normalized query fingerprint (PG14+ query_id)
+	BlockedBy     int
+	QueryID       int64
 }
 
 // ConnectionGroup is an aggregated view of connections sharing the same
 // user, application, and state.
 type ConnectionGroup struct {
-	User    string
-	AppName string
-	State   string
-	Count   int
+	User  string
+	App   string
+	State string
+	Count int
 }
 
 // DatabaseInfo describes a single non-template database.
@@ -86,18 +92,15 @@ type SlowQuery struct {
 
 // Transaction represents an active transaction from pg_stat_activity.
 type Transaction struct {
-	PID           int
-	User          string
-	AppName       string
-	State         string
+	ResourceBase
 	XactDuration  time.Duration
 	QueryDuration time.Duration
-	Query         string
-	LockCount     int // number of locks held by this transaction
+	QueryText     string
+	LockCount     int
 }
 
-// LockInfo describes a blocked lock and the backend blocking it.
-type LockInfo struct {
+// Lock describes a blocked lock and the backend blocking it.
+type Lock struct {
 	BlockedPID    int
 	BlockingPID   int
 	BlockedUser   string

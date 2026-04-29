@@ -161,7 +161,7 @@ func (v *Transactions) render() {
 		if v.filterText != "" {
 			match := false
 			searchText := strings.ToLower(v.filterText)
-			for _, val := range []string{pid, txn.User, txn.AppName, txn.State, txnAge, qAge} {
+			for _, val := range []string{pid, txn.User, txn.App, txn.State, txnAge, qAge} {
 				if strings.Contains(strings.ToLower(val), searchText) {
 					match = true
 					break
@@ -189,7 +189,7 @@ func (v *Transactions) render() {
 
 		v.table.SetCell(row, 0, tview.NewTableCell(pid).SetTextColor(rowColor))
 		v.table.SetCell(row, 1, tview.NewTableCell(txn.User).SetTextColor(rowColor))
-		v.table.SetCell(row, 2, tview.NewTableCell(txn.AppName).SetTextColor(rowColor).SetExpansion(1))
+		v.table.SetCell(row, 2, tview.NewTableCell(txn.App).SetTextColor(rowColor).SetExpansion(1))
 
 		stateCell := tview.NewTableCell(txn.State).SetTextColor(rowColor)
 		if isIdleTxn {
@@ -230,7 +230,7 @@ func (v *Transactions) render() {
 		if v.filterText != "" {
 			match := false
 			searchText := strings.ToLower(v.filterText)
-			for _, val := range []string{pid, txn.User, txn.AppName, "completed", txnAge, qAge} {
+			for _, val := range []string{pid, txn.User, txn.App, "completed", txnAge, qAge} {
 				if strings.Contains(strings.ToLower(val), searchText) {
 					match = true
 					break
@@ -253,7 +253,7 @@ func (v *Transactions) render() {
 
 		v.table.SetCell(row, 0, tview.NewTableCell(pid).SetTextColor(grey))
 		v.table.SetCell(row, 1, tview.NewTableCell(txn.User).SetTextColor(grey))
-		v.table.SetCell(row, 2, tview.NewTableCell(txn.AppName).SetTextColor(grey).SetExpansion(1))
+		v.table.SetCell(row, 2, tview.NewTableCell(txn.App).SetTextColor(grey).SetExpansion(1))
 		v.table.SetCell(row, 3, tview.NewTableCell("completed").SetTextColor(grey))
 		v.table.SetCell(row, 4, tview.NewTableCell(txnAge).SetTextColor(grey))
 		v.table.SetCell(row, 5, tview.NewTableCell(qAge).SetTextColor(grey))

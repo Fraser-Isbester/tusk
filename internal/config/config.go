@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/fraser-isbester/tusk/internal/rules"
 	"gopkg.in/yaml.v3"
 )
 
@@ -25,9 +26,10 @@ type Profile struct {
 	Database        string        `yaml:"database"`
 	SSLMode         string        `yaml:"sslmode"`
 	URL             string        `yaml:"url"`
-	Readonly        bool          `yaml:"readonly"`
-	Color           string        `yaml:"color"`
-	RefreshInterval time.Duration `yaml:"refresh_interval"`
+	Readonly        bool                `yaml:"readonly"`
+	Color           string              `yaml:"color"`
+	RefreshInterval time.Duration       `yaml:"refresh_interval"`
+	Rules           []rules.RuleConfig  `yaml:"rules"`
 }
 
 // ConnectionString returns a PostgreSQL connection string for this profile.

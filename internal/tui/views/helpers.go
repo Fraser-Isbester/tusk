@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/fraser-isbester/tusk/internal/rules"
+	"github.com/fraser-isbester/tusk/internal/tui/theme"
+	"github.com/gdamore/tcell/v2"
 )
 
 // formatSize converts bytes to a human-readable string (B, KB, MB, GB, TB).
@@ -108,6 +112,36 @@ func countStatements(query string) int {
 		count = 1
 	}
 	return count
+}
+
+// breachIcon returns a short indicator for the breach action status.
+func breachIcon(b rules.Breach) string {
+	if b.Error != "" {
+		return "[E]"
+	}
+	if b.Actioned {
+		switch b.Action {
+		case "terminate":
+			return "[T]"
+		case "cancel":
+			return "[C]"
+		default:
+			return "[L]"
+		}
+	}
+	return "[!]"
+}
+
+// breachColor returns the color for a breach indicator cell.
+func breachColor(pids map[int]rules.Breach, pid int) tcell.Color {
+	b, ok := pids[pid]
+	if !ok {
+		return theme.ColorFg
+	}
+	if b.Actioned {
+		return theme.ColorRed
+	}
+	return theme.ColorYellow
 }
 
 // boolIcon returns a check or cross mark for a boolean.

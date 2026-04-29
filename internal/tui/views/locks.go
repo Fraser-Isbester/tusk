@@ -17,7 +17,7 @@ import (
 type Locks struct {
 	table  *tview.Table
 	db     *db.DB
-	data       []db.LockInfo
+	data       []db.Lock
 	filterText string
 	mu         sync.Mutex
 	ticker *time.Ticker
@@ -78,13 +78,13 @@ func (v *Locks) Stop() {
 }
 
 // SelectedLock returns the lock info at the currently selected row.
-func (v *Locks) SelectedLock() (db.LockInfo, bool) {
+func (v *Locks) SelectedLock() (db.Lock, bool) {
 	row, _ := v.table.GetSelection()
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	idx := row - 1
 	if idx < 0 || idx >= len(v.data) {
-		return db.LockInfo{}, false
+		return db.Lock{}, false
 	}
 	return v.data[idx], true
 }

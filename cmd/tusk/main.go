@@ -3,11 +3,13 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/fraser-isbester/tusk/internal/config"
 	"github.com/fraser-isbester/tusk/internal/db"
+	"github.com/fraser-isbester/tusk/internal/rules"
 	"github.com/fraser-isbester/tusk/internal/tui"
 )
 
@@ -29,6 +31,7 @@ func main() {
 			var profileName string
 			var profileColor string
 			var readonly bool
+			var ruleConfigs []rules.RuleConfig
 
 			if len(args) > 0 {
 				connStr = args[0]
@@ -45,6 +48,7 @@ func main() {
 				}
 				profileColor = profile.Color
 				readonly = profile.Readonly
+				ruleConfigs = profile.Rules
 			}
 
 			database, err := db.New(connStr)
@@ -53,7 +57,16 @@ func main() {
 			}
 			defer database.Close()
 
-			app := tui.NewApp(database, profileName, profileColor, readonly)
+			var engine *rules.Engine
+			if len(ruleConfigs) > 0 {
+				compiled, err := rules.BuildRules(ruleConfigs, readonly)
+				if err != nil {
+					return fmt.Errorf("compiling rules: %w", err)
+				}
+				engine = rules.NewEngine(compiled, database, 5*time.Minute, 1000)
+			}
+
+			app := tui.NewApp(database, profileName, profileColor, readonly, engine)
 			if err := app.Run(); err != nil {
 				return fmt.Errorf("running tusk: %w", err)
 			}

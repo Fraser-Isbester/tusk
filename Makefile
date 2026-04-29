@@ -6,9 +6,9 @@ TUSK_DB := postgres://postgres:postgres@localhost:5432/tuskdev?sslmode=disable
 build:
 	go build -o tusk ./cmd/tusk
 
-## Run tusk against the local dev database
+## Run tusk against the local dev database (uses profile from ~/.config/tusk/config.yaml)
 run: build
-	./tusk '$(TUSK_DB)'
+	./tusk -P dev
 
 ## Build + run (alias)
 dev: run
