@@ -88,14 +88,13 @@ func NewApp(database *db.DB, profileName, profileColor string, readonly bool) *A
 		commandInput: ci,
 	}
 
-	a.views["dashboard"] = views.NewDashboard(database)
 	a.views["queries"] = views.NewQueries(database)
 	a.views["tables"] = views.NewTables(database)
 	a.views["connections"] = views.NewConnections(database)
 	a.views["db"] = views.NewDatabases(database)
 	a.views["roles"] = views.NewRoles(database)
 
-	a.activeView = "dashboard"
+	a.activeView = "queries"
 
 	a.help.SetBindings([]components.HelpBinding{
 		{Key: ":", Description: "command mode"},
@@ -247,11 +246,6 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case "enter":
 		switch v := a.views[a.activeView].(type) {
-		case *views.Dashboard:
-			if q, ok := v.SelectedQuery(); ok {
-				a.views["query-detail"] = views.NewQueryDetail(q)
-				return a, a.switchView("query-detail")
-			}
 		case *views.Queries:
 			if q, ok := v.SelectedQuery(); ok {
 				a.views["query-detail"] = views.NewQueryDetail(q)
@@ -361,12 +355,18 @@ func (a *App) renderHeader(w int) string {
 	// Build connection string with color-coded breakdown
 	connStr := ""
 	if a.connMax > 0 {
-		connStr = green.Render(fmt.Sprintf("%d active", a.activeConns))
-		connStr += val.Render(" / ") + yellow.Render(fmt.Sprintf("%d idle", a.idleConns))
-		if a.idleTxnConns > 0 {
-			connStr += val.Render(" / ") + red.Render(fmt.Sprintf("%d idle-in-txn", a.idleTxnConns))
+		parts := []string{green.Render(fmt.Sprintf("%d active", a.activeConns))}
+		if a.idleConns > 0 {
+			parts = append(parts, yellow.Render(fmt.Sprintf("%d idle", a.idleConns)))
 		}
-		connStr += val.Render(fmt.Sprintf(" / %d total", a.connCount))
+		if a.idleTxnConns > 0 {
+			parts = append(parts, red.Render(fmt.Sprintf("%d idle-in-txn", a.idleTxnConns)))
+		}
+		other := a.connCount - a.activeConns - a.idleConns - a.idleTxnConns
+		if other > 0 {
+			parts = append(parts, val.Render(fmt.Sprintf("%d other", other)))
+		}
+		connStr = strings.Join(parts, val.Render(" / "))
 	}
 
 	// Cache hit ratio
@@ -511,8 +511,6 @@ func (a *App) renderStatus(w int) string {
 func (a *App) viewItemCount() int {
 	// We'll use a type assertion approach
 	switch v := a.views[a.activeView].(type) {
-	case *views.Dashboard:
-		return v.QueryCount()
 	case *views.Queries:
 		return v.ItemCount()
 	case *views.Tables:

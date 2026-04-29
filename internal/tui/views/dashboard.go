@@ -154,7 +154,7 @@ func (d *Dashboard) View() string {
 		return fmt.Sprintf("  Error: %v", d.err)
 	}
 
-	return d.table.View()
+	return TableBorder.Render(d.table.View())
 }
 
 func (d *Dashboard) updateRows() {

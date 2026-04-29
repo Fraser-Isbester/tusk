@@ -24,6 +24,8 @@ func New(connString string) (*DB, error) {
 
 	cfg.MaxConns = 3
 
+	cfg.ConnConfig.RuntimeParams["application_name"] = "tusk"
+
 	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
 		_, err := conn.Exec(ctx, "SET statement_timeout = '2s'")
 		return err
