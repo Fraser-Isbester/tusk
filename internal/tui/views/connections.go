@@ -75,6 +75,18 @@ func (v *Connections) Stop() {
 	}
 }
 
+// SelectedUser returns the user from the currently selected connection group.
+func (v *Connections) SelectedUser() (string, bool) {
+	row, _ := v.table.GetSelection()
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	idx := row - 1
+	if idx < 0 || idx >= len(v.conns) {
+		return "", false
+	}
+	return v.conns[idx].User, true
+}
+
 func (v *Connections) refresh() {
 	ctx := context.Background()
 	conns, err := v.db.GetConnections(ctx)

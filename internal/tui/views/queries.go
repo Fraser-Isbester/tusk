@@ -14,12 +14,14 @@ import (
 
 // Queries is the active queries view.
 type Queries struct {
-	table   *tview.Table
-	db      *db.DB
-	queries []db.ActiveQuery
-	mu      sync.Mutex
-	ticker  *time.Ticker
-	done    chan struct{}
+	table       *tview.Table
+	db          *db.DB
+	queries     []db.ActiveQuery
+	visibleData []db.ActiveQuery
+	userFilter  string
+	mu          sync.Mutex
+	ticker      *time.Ticker
+	done        chan struct{}
 }
 
 // NewQueriesView creates a new Queries view.
@@ -136,11 +138,16 @@ func (v *Queries) render() {
 		v.table.SetCell(0, i, cell)
 	}
 
+	v.visibleData = v.visibleData[:0]
 	row := 1
 	for _, q := range v.queries {
 		if q.User == "(system)" {
 			continue
 		}
+		if v.userFilter != "" && q.User != v.userFilter {
+			continue
+		}
+		v.visibleData = append(v.visibleData, q)
 
 		pid := fmt.Sprintf("%d", q.PID)
 		wait := q.WaitEventType
@@ -173,6 +180,25 @@ func (v *Queries) render() {
 	if selectedRow > 0 && selectedRow < v.table.GetRowCount() {
 		v.table.Select(selectedRow, 0)
 	}
+}
+
+// SelectedQuery returns the query at the currently selected row.
+func (v *Queries) SelectedQuery() (db.ActiveQuery, bool) {
+	row, _ := v.table.GetSelection()
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	idx := row - 1
+	if idx < 0 || idx >= len(v.visibleData) {
+		return db.ActiveQuery{}, false
+	}
+	return v.visibleData[idx], true
+}
+
+// SetUserFilter restricts the view to queries from a specific user.
+func (v *Queries) SetUserFilter(user string) {
+	v.mu.Lock()
+	v.userFilter = user
+	v.mu.Unlock()
 }
 
 func (v *Queries) pidAtRow(row int) int {

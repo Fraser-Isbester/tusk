@@ -75,6 +75,18 @@ func (v *Roles) Stop() {
 	}
 }
 
+// SelectedRole returns the role name at the currently selected row.
+func (v *Roles) SelectedRole() (string, bool) {
+	row, _ := v.table.GetSelection()
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	idx := row - 1
+	if idx < 0 || idx >= len(v.roles) {
+		return "", false
+	}
+	return v.roles[idx].Name, true
+}
+
 func (v *Roles) refresh() {
 	ctx := context.Background()
 	roles, err := v.db.GetRoles(ctx)

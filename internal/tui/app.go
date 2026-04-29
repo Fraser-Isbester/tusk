@@ -76,6 +76,7 @@ func NewApp(database *db.DB, profileName, profileColor string, readonly bool) *A
 	a.activeView = "queries"
 	a.switchView("queries")
 	a.setupKeys()
+	a.wireNavigation()
 
 	return a
 }
@@ -157,8 +158,14 @@ func (a *App) setupKeys() {
 		switch evt.Key() {
 		case tcell.KeyEscape:
 			if len(a.viewStack) > 0 {
+				oldView := a.activeView
 				prev := a.viewStack[len(a.viewStack)-1]
 				a.viewStack = a.viewStack[:len(a.viewStack)-1]
+				if strings.HasSuffix(oldView, "-detail") || strings.HasPrefix(oldView, "queries-") {
+					a.pages.RemovePage(oldView)
+				}
+				// Set activeView to prev so switchView doesn't re-push
+				a.activeView = prev
 				a.switchView(prev)
 				return nil
 			}
@@ -375,6 +382,97 @@ func (a *App) fetchServerInfo() {
 	}
 	a.prevXactTotal = xactTotal
 	a.prevTime = now
+}
+
+func (a *App) wireNavigation() {
+	// Queries: Enter -> Query Detail
+	if qv, ok := a.viewMap["queries"].(*views.Queries); ok {
+		qv.Table().SetSelectedFunc(func(row, col int) {
+			if q, ok := qv.SelectedQuery(); ok {
+				detail := views.NewQueryDetailView(q, a.db)
+				a.showDetail("query-detail", detail)
+			}
+		})
+	}
+
+	// Connections: Enter -> filtered queries for selected user
+	if cv, ok := a.viewMap["connections"].(*views.Connections); ok {
+		cv.Table().SetSelectedFunc(func(row, col int) {
+			if user, ok := cv.SelectedUser(); ok {
+				qv := views.NewQueriesView(a.db)
+				qv.SetUserFilter(user)
+				a.showFilteredView("queries-"+user, qv)
+			}
+		})
+	}
+
+	// Roles: Enter -> filtered queries for selected role
+	if rv, ok := a.viewMap["roles"].(*views.Roles); ok {
+		rv.Table().SetSelectedFunc(func(row, col int) {
+			if role, ok := rv.SelectedRole(); ok {
+				qv := views.NewQueriesView(a.db)
+				qv.SetUserFilter(role)
+				a.showFilteredView("queries-"+role, qv)
+			}
+		})
+	}
+
+	// Transactions: Enter -> Query Detail
+	if tv, ok := a.viewMap["transactions"].(*views.Transactions); ok {
+		tv.Table().SetSelectedFunc(func(row, col int) {
+			if t, ok := tv.SelectedTransaction(); ok {
+				q := db.ActiveQuery{
+					PID:      t.PID,
+					User:     t.User,
+					AppName:  t.AppName,
+					State:    t.State,
+					Duration: t.QueryDuration,
+					Query:    t.Query,
+				}
+				detail := views.NewQueryDetailView(q, a.db)
+				a.showDetail("txn-detail", detail)
+			}
+		})
+	}
+
+	// Locks: Enter -> Lock Detail
+	if lv, ok := a.viewMap["locks"].(*views.Locks); ok {
+		lv.Table().SetSelectedFunc(func(row, col int) {
+			if l, ok := lv.SelectedLock(); ok {
+				detail := views.NewLockDetailView(l, a.db)
+				a.showDetail("lock-detail", detail)
+			}
+		})
+	}
+
+	// Tables: Enter -> Table Detail
+	if tv, ok := a.viewMap["tables"].(*views.Tables); ok {
+		tv.Table().SetSelectedFunc(func(row, col int) {
+			if t, ok := tv.SelectedTable(); ok {
+				detail := views.NewTableDetailView(t.Schema, t.Name, a.db, a.app)
+				a.showDetail("table-detail", detail)
+			}
+		})
+	}
+}
+
+func (a *App) showDetail(name string, detail *tview.TextView) {
+	a.pages.AddPage(name, detail, true, true)
+	a.viewStack = append(a.viewStack, a.activeView)
+	a.activeView = name
+	a.app.SetFocus(detail)
+	a.updateCrumbs()
+	a.updateStatus()
+}
+
+func (a *App) showFilteredView(name string, view View) {
+	a.pages.AddPage(name, view.Table(), true, true)
+	view.Start(a.app)
+	a.viewStack = append(a.viewStack, a.activeView)
+	a.activeView = name
+	a.app.SetFocus(view.Table())
+	a.updateCrumbs()
+	a.updateStatus()
 }
 
 func (a *App) Run() error {
