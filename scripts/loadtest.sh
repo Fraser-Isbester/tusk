@@ -114,45 +114,24 @@ echo "[+] Very slow batch job (>30s, always red)..."
 PIDS+=($!)
 
 # ── 5. Idle-in-transaction — the classic leak pattern ─────────────────
-# These show different txn age vs query age because the txn started
-# before the pg_sleep query.
-echo "[+] Idle-in-transaction connections (3 — different ages)..."
-(
-    psql "$DB" <<SQL > /dev/null 2>&1 || true
-SET application_name = 'leaky-service-1';
-BEGIN;
-SELECT * FROM app.users LIMIT 1;
-SELECT pg_sleep($DURATION);
-ROLLBACK;
-SQL
-) &
-PIDS+=($!)
-
-sleep 5
-
-(
-    psql "$DB" <<SQL > /dev/null 2>&1 || true
-SET application_name = 'leaky-service-2';
-BEGIN;
-UPDATE app.products SET inventory = inventory WHERE id = 2;
-SELECT pg_sleep($DURATION);
-ROLLBACK;
-SQL
-) &
-PIDS+=($!)
-
-sleep 5
-
-(
-    psql "$DB" <<SQL > /dev/null 2>&1 || true
-SET application_name = 'leaky-service-3';
-BEGIN;
-INSERT INTO analytics.events (event_type, user_id) VALUES ('abandoned_txn', 1);
-SELECT pg_sleep($DURATION);
-ROLLBACK;
-SQL
-) &
-PIDS+=($!)
+# To get real "idle in transaction" state, we open a transaction, run a
+# query, then keep psql open without sending more commands. The connection
+# sits in "idle in transaction" state holding locks.
+echo "[+] Idle-in-transaction connections (3 — staggered)..."
+for i in 1 2 3; do
+    (
+        {
+            echo "SET application_name = 'leaky-service-$i';"
+            echo "BEGIN;"
+            echo "SELECT * FROM app.users LIMIT 1;"
+            # Now just sleep the shell — psql stays open with txn idle
+            sleep "$DURATION"
+            echo "ROLLBACK;"
+        } | psql "$DB" > /dev/null 2>&1 || true
+    ) &
+    PIDS+=($!)
+    sleep 3  # stagger so they have different ages
+done
 
 # ── 6. Multi-statement transaction — txn age != query age ────────────
 echo "[+] Multi-statement transactions..."
