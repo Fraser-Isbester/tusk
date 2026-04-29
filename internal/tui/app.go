@@ -181,6 +181,10 @@ func (a *App) switchView(name string) {
 	if _, ok := a.viewMap[name]; !ok {
 		return
 	}
+	// Clear any active filter when switching views
+	if a.filterText != "" {
+		a.hideFilter()
+	}
 	if old, ok := a.viewMap[a.activeView]; ok {
 		old.Stop()
 	}
@@ -198,14 +202,18 @@ func (a *App) switchView(name string) {
 
 func (a *App) setupKeys() {
 	a.app.SetInputCapture(func(evt *tcell.EventKey) *tcell.EventKey {
-		// When filter input is active, handle Esc/Enter specially
+		// When filter input has focus, handle Esc/Enter
 		if a.filterActive {
 			switch evt.Key() {
 			case tcell.KeyEscape:
-				a.hideFilter(true)
+				a.hideFilter()
 				return nil
 			case tcell.KeyEnter:
-				a.hideFilter(false)
+				// Keep filter box visible, just move focus back to table
+				a.filterActive = false
+				if v, ok := a.viewMap[a.activeView]; ok {
+					a.app.SetFocus(v.Table())
+				}
 				return nil
 			}
 			return evt
@@ -308,22 +316,47 @@ func (a *App) showFilter() {
 	a.app.SetFocus(a.filterInput)
 }
 
-func (a *App) hideFilter(clear bool) {
+func (a *App) hideFilter() {
 	a.filterActive = false
+	a.filterText = ""
+	a.filterInput.SetText("")
 	a.layout.RemoveItem(a.filterBox)
 
-	if clear {
-		a.filterText = ""
-		a.filterInput.SetText("")
-		if v, ok := a.viewMap[a.activeView]; ok {
-			v.SetFilter("")
-		}
-	}
-
-	a.updateTabBar()
 	if v, ok := a.viewMap[a.activeView]; ok {
+		v.SetFilter("")
 		a.app.SetFocus(v.Table())
 	}
+	a.updateTabBar()
+}
+
+// applyFilter shows the filter box pre-populated with text and applies it to the active view.
+func (a *App) applyFilter(text string) {
+	a.filterText = text
+	a.filterInput.SetText(text)
+
+	a.filterInput.SetChangedFunc(func(t string) {
+		a.filterText = t
+		if v, ok := a.viewMap[a.activeView]; ok {
+			v.SetFilter(t)
+		}
+		a.updateTabBar()
+	})
+
+	if v, ok := a.viewMap[a.activeView]; ok {
+		v.SetFilter(text)
+	}
+
+	// Show filter box if not already visible
+	a.layout.RemoveItem(a.filterBox)
+	a.layout.RemoveItem(a.pages)
+	a.layout.RemoveItem(a.status)
+	a.layout.AddItem(a.filterBox, 3, 0, false)
+	a.layout.AddItem(a.pages, 0, 1, true)
+	a.layout.AddItem(a.status, 1, 0, false)
+
+	// Don't focus the filter input — keep focus on the table
+	a.filterActive = false
+	a.updateTabBar()
 }
 
 func (a *App) updateHeader() {
@@ -460,14 +493,11 @@ func (a *App) updateTabBar() {
 			}
 			label = fmt.Sprintf("[#000000:#00D7FF:b] %s(%d) [-:-:-]", name, count)
 		} else {
-			label = fmt.Sprintf("[#808080] %s [-]", name)
+			label = fmt.Sprintf("[#D78700] %s [-]", name)
 		}
 		parts = append(parts, label)
 	}
-	text := strings.Join(parts, "[#585858]│[-]")
-	if a.filterText != "" {
-		text += fmt.Sprintf("  [#808080]filter: %s[-]", a.filterText)
-	}
+	text := strings.Join(parts, "[#D78700]│[-]")
 	a.tabBar.SetText(text)
 }
 
@@ -587,30 +617,28 @@ func (a *App) wireNavigation() {
 	if qv, ok := a.viewMap["queries"].(*views.Queries); ok {
 		qv.Table().SetSelectedFunc(func(row, col int) {
 			if q, ok := qv.SelectedQuery(); ok {
-				detail := views.NewQueryDetailView(q, a.db, nil, a.app)
+				detail := views.NewQueryDetailView(q, a.db, nil, a.app, a.engine)
 				a.showDetail("query-detail", detail)
 			}
 		})
 	}
 
-	// Connections: Enter -> filtered queries for selected user
+	// Connections: Enter -> switch to queries view with user filter
 	if cv, ok := a.viewMap["connections"].(*views.Connections); ok {
 		cv.Table().SetSelectedFunc(func(row, col int) {
 			if user, ok := cv.SelectedUser(); ok {
-				qv := views.NewQueriesView(a.db)
-				qv.SetUserFilter(user)
-				a.showFilteredView("queries-"+user, qv)
+				a.switchView("queries")
+				a.applyFilter(user)
 			}
 		})
 	}
 
-	// Roles: Enter -> filtered queries for selected role
+	// Roles: Enter -> switch to queries view with role filter
 	if rv, ok := a.viewMap["roles"].(*views.Roles); ok {
 		rv.Table().SetSelectedFunc(func(row, col int) {
 			if role, ok := rv.SelectedRole(); ok {
-				qv := views.NewQueriesView(a.db)
-				qv.SetUserFilter(role)
-				a.showFilteredView("queries-"+role, qv)
+				a.switchView("queries")
+				a.applyFilter(role)
 			}
 		})
 	}
@@ -629,7 +657,7 @@ func (a *App) wireNavigation() {
 					Duration:  t.QueryDuration,
 					QueryText: t.QueryText,
 				}
-				detail := views.NewQueryDetailView(q, a.db, a.queryHistory, a.app)
+				detail := views.NewQueryDetailView(q, a.db, a.queryHistory, a.app, a.engine)
 				a.showDetail("txn-detail", detail)
 			}
 		})
@@ -645,14 +673,12 @@ func (a *App) wireNavigation() {
 		})
 	}
 
-	// Rules: Enter -> Breaches filtered by selected rule
+	// Rules: Enter -> switch to breaches view with rule name filter
 	if rv, ok := a.viewMap["rules"].(*views.Rules); ok {
 		rv.Table().SetSelectedFunc(func(row, col int) {
 			if name, ok := rv.SelectedRule(); ok {
-				bv := views.NewBreachesView(a.engine)
-				bv.SetRuleFilter(name)
-				bv.SetOnSelect(func(b rules.Breach) { a.showBreachDetail(b) })
-				a.showFilteredView("breaches-"+name, bv)
+				a.switchView("breaches")
+				a.applyFilter(name)
 			}
 		})
 	}
@@ -690,7 +716,7 @@ func (a *App) showBreachDetail(b rules.Breach) {
 		if queries, err := a.db.GetActiveQueries(ctx); err == nil {
 			for _, q := range queries {
 				if q.PID == b.PID {
-					detail := views.NewQueryDetailView(q, a.db, nil, a.app)
+					detail := views.NewQueryDetailView(q, a.db, nil, a.app, a.engine)
 					a.showDetail("breach-query-detail", detail)
 					return
 				}
@@ -701,7 +727,7 @@ func (a *App) showBreachDetail(b rules.Breach) {
 			if q.State != "completed" {
 				q.State = "completed"
 			}
-			detail := views.NewQueryDetailView(q, a.db, nil, a.app)
+			detail := views.NewQueryDetailView(q, a.db, nil, a.app, a.engine)
 			a.showDetail("breach-query-detail", detail)
 		}
 	case rules.ResourceTransaction:
@@ -714,7 +740,7 @@ func (a *App) showBreachDetail(b rules.Breach) {
 						},
 						Duration: t.QueryDuration, QueryText: t.QueryText,
 					}
-					detail := views.NewQueryDetailView(q, a.db, a.queryHistory, a.app)
+					detail := views.NewQueryDetailView(q, a.db, a.queryHistory, a.app, a.engine)
 					a.showDetail("breach-txn-detail", detail)
 					return
 				}
@@ -728,7 +754,7 @@ func (a *App) showBreachDetail(b rules.Breach) {
 				},
 				Duration: t.QueryDuration, QueryText: t.QueryText,
 			}
-			detail := views.NewQueryDetailView(q, a.db, a.queryHistory, a.app)
+			detail := views.NewQueryDetailView(q, a.db, a.queryHistory, a.app, a.engine)
 			a.showDetail("breach-txn-detail", detail)
 		}
 	case rules.ResourceLock:
@@ -746,16 +772,6 @@ func (a *App) showBreachDetail(b rules.Breach) {
 			a.showDetail("breach-lock-detail", detail)
 		}
 	}
-}
-
-func (a *App) showFilteredView(name string, view View) {
-	a.pages.AddPage(name, view.Table(), true, true)
-	view.Start(a.app)
-	a.viewStack = append(a.viewStack, a.activeView)
-	a.activeView = name
-	a.app.SetFocus(view.Table())
-	a.updateTabBar()
-	a.updateStatus()
 }
 
 func (a *App) Run() error {

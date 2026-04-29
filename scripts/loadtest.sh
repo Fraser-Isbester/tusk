@@ -48,12 +48,18 @@ echo "Target:   $DB"
 echo ""
 
 # ── 1. Fast OLTP reads — different app names for connection variety ──
+# Runs many queries per connection so they're visible across multiple polls
 echo "[+] OLTP readers (3 workers, different apps)..."
 for app in checkout-service user-service product-service; do
     (
         run_until "$END" psql "$DB" -c "
             SET application_name = '$app';
             SELECT * FROM app.users WHERE id = (random()*4+1)::int;
+            SELECT * FROM app.orders WHERE user_id = (random()*4+1)::int;
+            SELECT * FROM app.products WHERE id = (random()*4+1)::int;
+            SELECT o.id, o.status, u.name FROM app.orders o JOIN app.users u ON u.id = o.user_id LIMIT 10;
+            SELECT p.name, p.price_cents FROM app.products p ORDER BY random() LIMIT 5;
+            SELECT count(*) FROM app.order_items;
         " > /dev/null
     ) &
     PIDS+=($!)
@@ -65,6 +71,12 @@ for app in order-processor event-ingester; do
     (
         run_until "$END" psql "$DB" -c "
             SET application_name = '$app';
+            INSERT INTO analytics.events (event_type, user_id, payload)
+            VALUES (
+                (ARRAY['page_view','click','purchase','signup','logout'])[1+(random()*4)::int],
+                (random()*4+1)::int,
+                jsonb_build_object('ts', now(), 'src', '$app', 'session', gen_random_uuid())
+            );
             INSERT INTO analytics.events (event_type, user_id, payload)
             VALUES (
                 (ARRAY['page_view','click','purchase','signup','logout'])[1+(random()*4)::int],
@@ -114,16 +126,18 @@ echo "[+] Very slow batch job (>30s, always red)..."
 PIDS+=($!)
 
 # ── 5. Idle-in-transaction — the classic leak pattern ─────────────────
-# To get real "idle in transaction" state, we open a transaction, run a
-# query, then keep psql open without sending more commands. The connection
-# sits in "idle in transaction" state holding locks.
-echo "[+] Idle-in-transaction connections (3 — staggered)..."
+# Open a transaction, run several queries one at a time (so query history
+# captures each one), then let the connection sit idle holding locks.
+echo "[+] Idle-in-transaction connections (3 — staggered, multi-query)..."
 for i in 1 2 3; do
     (
         {
             echo "SET application_name = 'leaky-service-$i';"
             echo "BEGIN;"
-            echo "SELECT * FROM app.users LIMIT 1;"
+            echo "SELECT id, name, email FROM app.users WHERE id = $i;"
+            echo "SELECT o.id, o.status, o.total_cents FROM app.orders o WHERE o.user_id = $i;"
+            echo "SELECT p.name, oi.quantity FROM app.order_items oi JOIN app.products p ON p.id = oi.product_id JOIN app.orders o ON o.id = oi.order_id WHERE o.user_id = $i;"
+            echo "UPDATE app.users SET email = email WHERE id = $i;"
             # Now just sleep the shell — psql stays open with txn idle
             sleep "$DURATION"
             echo "ROLLBACK;"
@@ -430,9 +444,6 @@ PIDS+=($!)
         sleep 2
         echo "COMMIT;"
     } | psql "$0" > /dev/null 2>&1' "$DB"
-) &
-PIDS+=($!)
-    sleep 2
 ) &
 PIDS+=($!)
 
