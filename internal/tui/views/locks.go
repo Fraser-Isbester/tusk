@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/evertras/bubble-table/table"
 	"github.com/fraser-isbester/tusk/internal/db"
+	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
 
 const locksRefreshInterval = 2 * time.Second
@@ -40,18 +42,20 @@ type Locks struct {
 // NewLocks creates a new Locks view.
 func NewLocks(database *db.DB) *Locks {
 	cols := []table.Column{
-		{Title: "BLOCKED", Width: 8},
-		{Title: "BLOCKER", Width: 8},
-		{Title: "TYPE", Width: 10},
-		{Title: "MODE", Width: 14},
-		{Title: "WAIT", Width: 8},
-		{Title: "BLOCKER APP", Width: 14},
+		table.NewColumn("blocked", "BLOCKED", 8),
+		table.NewColumn("blocker", "BLOCKER", 8),
+		table.NewColumn("type", "TYPE", 10),
+		table.NewColumn("mode", "MODE", 12),
+		table.NewColumn("wait", "WAIT", 8),
+		table.NewFlexColumn("blocker_app", "BLOCKER APP", 1),
 	}
-	t := table.New(
-		table.WithColumns(cols),
-		table.WithFocused(true),
-	)
-	t.SetStyles(defaultTableStyles())
+	t := table.New(cols).
+		Focused(true).
+		WithPageSize(20).
+		Border(NoBorder).
+		WithNoPagination().
+		HeaderStyle(HeaderStyle).
+		HighlightStyle(HighlightStyle)
 	return &Locks{
 		db:    database,
 		table: t,
@@ -62,8 +66,7 @@ func NewLocks(database *db.DB) *Locks {
 func (v *Locks) SetSize(w, h int) {
 	v.width = w
 	v.height = h
-	v.table.SetWidth(w)
-	v.table.SetHeight(h - 2)
+	v.table = v.table.WithTargetWidth(w).WithPageSize(h - 2)
 }
 
 // ItemCount returns the number of lock entries.
@@ -122,32 +125,31 @@ func (v *Locks) View() string {
 	if v.err != nil {
 		return fmt.Sprintf("Error: %v", v.err)
 	}
-	return TableBorder.Render(v.table.View())
+	return v.table.View()
 }
 
 func (v *Locks) updateRows() {
 	var rows []table.Row
 	for _, l := range v.data {
-		row := table.Row{
-			fmt.Sprintf("%d", l.BlockedPID),
-			fmt.Sprintf("%d", l.BlockingPID),
-			l.LockType,
-			l.Mode,
-			formatDuration(l.WaitDuration),
-			l.BlockingApp,
-		}
-		rows = append(rows, row)
+		rows = append(rows, table.NewRow(table.RowData{
+			"blocked":       fmt.Sprintf("%d", l.BlockedPID),
+			"blocker":       fmt.Sprintf("%d", l.BlockingPID),
+			"type":          l.LockType,
+			"mode":          l.Mode,
+			"wait":          formatDuration(l.WaitDuration),
+			"blocker_app":   l.BlockingApp,
+			"_blocking_pid": l.BlockingPID,
+		}))
 	}
-	v.table.SetRows(rows)
+	v.table = v.table.WithRows(rows).WithRowStyleFunc(func(input table.RowStyleFuncInput) lipgloss.Style {
+		return lipgloss.NewStyle().Foreground(theme.ColorYellow)
+	})
 }
 
 func (v *Locks) selectedBlockingPID() (int, bool) {
-	row := v.table.SelectedRow()
-	if row == nil {
-		return 0, false
-	}
-	var pid int
-	if _, err := fmt.Sscanf(row[1], "%d", &pid); err != nil {
+	row := v.table.HighlightedRow()
+	pid, ok := row.Data["_blocking_pid"].(int)
+	if !ok {
 		return 0, false
 	}
 	return pid, true

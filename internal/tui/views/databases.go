@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/evertras/bubble-table/table"
 	"github.com/fraser-isbester/tusk/internal/db"
 )
 
@@ -36,17 +36,18 @@ type Databases struct {
 // NewDatabases creates a new Databases view.
 func NewDatabases(database *db.DB) *Databases {
 	cols := []table.Column{
-		{Title: "Name", Width: 24},
-		{Title: "Size", Width: 12},
-		{Title: "Owner", Width: 16},
+		table.NewFlexColumn("name", "Name", 1),
+		table.NewColumn("size", "Size", 10),
+		table.NewColumn("owner", "Owner", 12),
 	}
 
-	t := table.New(
-		table.WithColumns(cols),
-		table.WithFocused(true),
-	)
-
-	t.SetStyles(defaultTableStyles())
+	t := table.New(cols).
+		Focused(true).
+		WithPageSize(20).
+		Border(NoBorder).
+		WithNoPagination().
+		HeaderStyle(HeaderStyle).
+		HighlightStyle(HighlightStyle)
 
 	return &Databases{
 		db:    database,
@@ -58,8 +59,7 @@ func NewDatabases(database *db.DB) *Databases {
 func (v *Databases) SetSize(w, h int) {
 	v.width = w
 	v.height = h
-	v.table.SetWidth(w)
-	v.table.SetHeight(h - 2)
+	v.table = v.table.WithTargetWidth(w).WithPageSize(h - 2)
 }
 
 // ItemCount returns the number of databases.
@@ -114,22 +114,23 @@ func (v *Databases) View() string {
 		return fmt.Sprintf("Error: %v", v.err)
 	}
 
-	return TableBorder.Render(v.table.View())
+	return v.table.View()
 }
 
 func (v *Databases) updateRows() {
 	var rows []table.Row
 	for _, d := range v.databases {
-		row := table.Row{
-			d.Name,
-			formatSize(d.Size),
-			d.Owner,
-		}
-		if v.filterValue == "" || rowContains(row, v.filterValue) {
-			rows = append(rows, row)
+		sizeStr := formatSize(d.Size)
+		displayCols := []string{d.Name, sizeStr, d.Owner}
+		if v.filterValue == "" || rowContains(displayCols, v.filterValue) {
+			rows = append(rows, table.NewRow(table.RowData{
+				"name":  d.Name,
+				"size":  sizeStr,
+				"owner": d.Owner,
+			}))
 		}
 	}
-	v.table.SetRows(rows)
+	v.table = v.table.WithRows(rows)
 }
 
 func (v *Databases) fetchData() tea.Cmd {

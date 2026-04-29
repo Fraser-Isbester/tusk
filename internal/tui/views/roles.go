@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/evertras/bubble-table/table"
 	"github.com/fraser-isbester/tusk/internal/db"
 )
 
@@ -36,20 +36,21 @@ type Roles struct {
 // NewRoles creates a new Roles view.
 func NewRoles(database *db.DB) *Roles {
 	cols := []table.Column{
-		{Title: "Name", Width: 20},
-		{Title: "Superuser", Width: 10},
-		{Title: "Create Role", Width: 12},
-		{Title: "Create DB", Width: 10},
-		{Title: "Login", Width: 8},
-		{Title: "Conn Limit", Width: 11},
+		table.NewFlexColumn("name", "Name", 1),
+		table.NewColumn("superuser", "Superuser", 10),
+		table.NewColumn("createrole", "Create Role", 12),
+		table.NewColumn("createdb", "Create DB", 10),
+		table.NewColumn("login", "Login", 8),
+		table.NewColumn("connlimit", "Conn Limit", 11),
 	}
 
-	t := table.New(
-		table.WithColumns(cols),
-		table.WithFocused(true),
-	)
-
-	t.SetStyles(defaultTableStyles())
+	t := table.New(cols).
+		Focused(true).
+		WithPageSize(20).
+		Border(NoBorder).
+		WithNoPagination().
+		HeaderStyle(HeaderStyle).
+		HighlightStyle(HighlightStyle)
 
 	return &Roles{
 		db:    database,
@@ -61,8 +62,7 @@ func NewRoles(database *db.DB) *Roles {
 func (v *Roles) SetSize(w, h int) {
 	v.width = w
 	v.height = h
-	v.table.SetWidth(w)
-	v.table.SetHeight(h - 2)
+	v.table = v.table.WithTargetWidth(w).WithPageSize(h - 2)
 }
 
 // ItemCount returns the number of roles.
@@ -117,7 +117,7 @@ func (v *Roles) View() string {
 		return fmt.Sprintf("Error: %v", v.err)
 	}
 
-	return TableBorder.Render(v.table.View())
+	return v.table.View()
 }
 
 func (v *Roles) updateRows() {
@@ -128,19 +128,19 @@ func (v *Roles) updateRows() {
 			connLimit = "unlimited"
 		}
 
-		row := table.Row{
-			r.Name,
-			boolIcon(r.IsSuperuser),
-			boolIcon(r.CanCreateRole),
-			boolIcon(r.CanCreateDB),
-			boolIcon(r.CanLogin),
-			connLimit,
-		}
-		if v.filterValue == "" || rowContains(row, v.filterValue) {
-			rows = append(rows, row)
+		displayCols := []string{r.Name, boolIcon(r.IsSuperuser), boolIcon(r.CanCreateRole), boolIcon(r.CanCreateDB), boolIcon(r.CanLogin), connLimit}
+		if v.filterValue == "" || rowContains(displayCols, v.filterValue) {
+			rows = append(rows, table.NewRow(table.RowData{
+				"name":       r.Name,
+				"superuser":  boolIcon(r.IsSuperuser),
+				"createrole": boolIcon(r.CanCreateRole),
+				"createdb":   boolIcon(r.CanCreateDB),
+				"login":      boolIcon(r.CanLogin),
+				"connlimit":  connLimit,
+			}))
 		}
 	}
-	v.table.SetRows(rows)
+	v.table = v.table.WithRows(rows)
 }
 
 func (v *Roles) fetchData() tea.Cmd {
