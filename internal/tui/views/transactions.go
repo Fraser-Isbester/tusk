@@ -18,9 +18,11 @@ type Transactions struct {
 	table        *tview.Table
 	db           *db.DB
 	data         []db.Transaction
+	completed    []db.Transaction
 	visibleData  []db.Transaction
 	filterText   string
 	queryHistory *db.QueryHistory
+	prevPIDs     map[int]db.Transaction
 	mu           sync.Mutex
 	ticker       *time.Ticker
 	done         chan struct{}
@@ -101,7 +103,29 @@ func (v *Transactions) refresh() {
 	if v.queryHistory != nil {
 		v.queryHistory.RecordTransactions(data)
 	}
+
+	currentPIDs := make(map[int]bool)
+	for _, t := range data {
+		currentPIDs[t.PID] = true
+	}
+
 	v.mu.Lock()
+	if v.prevPIDs != nil {
+		for pid, prev := range v.prevPIDs {
+			if !currentPIDs[pid] && prev.User != "(system)" {
+				prev.State = "completed"
+				v.completed = append(v.completed, prev)
+			}
+		}
+	}
+	if len(v.completed) > 20 {
+		v.completed = v.completed[len(v.completed)-20:]
+	}
+
+	v.prevPIDs = make(map[int]db.Transaction)
+	for _, t := range data {
+		v.prevPIDs[t.PID] = t
+	}
 	v.data = data
 	v.mu.Unlock()
 }
@@ -188,6 +212,49 @@ func (v *Transactions) render() {
 			}
 		}
 		v.table.SetCell(row, 6, tview.NewTableCell(fmt.Sprintf("%d", queryCount)).SetTextColor(rowColor))
+		row++
+	}
+
+	// Completed transactions in grey
+	for _, txn := range v.completed {
+		if txn.User == "(system)" {
+			continue
+		}
+		pid := fmt.Sprintf("%d", txn.PID)
+		txnAge := formatDuration(txn.XactDuration)
+		qAge := formatDuration(txn.QueryDuration)
+
+		if v.filterText != "" {
+			match := false
+			searchText := strings.ToLower(v.filterText)
+			for _, val := range []string{pid, txn.User, txn.AppName, "completed", txnAge, qAge} {
+				if strings.Contains(strings.ToLower(val), searchText) {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+
+		v.visibleData = append(v.visibleData, txn)
+		grey := theme.ColorDim
+
+		queryCount := 1
+		if v.queryHistory != nil {
+			if entries := v.queryHistory.Get(txn.PID); len(entries) > 0 {
+				queryCount = len(entries)
+			}
+		}
+
+		v.table.SetCell(row, 0, tview.NewTableCell(pid).SetTextColor(grey))
+		v.table.SetCell(row, 1, tview.NewTableCell(txn.User).SetTextColor(grey))
+		v.table.SetCell(row, 2, tview.NewTableCell(txn.AppName).SetTextColor(grey).SetExpansion(1))
+		v.table.SetCell(row, 3, tview.NewTableCell("completed").SetTextColor(grey))
+		v.table.SetCell(row, 4, tview.NewTableCell(txnAge).SetTextColor(grey))
+		v.table.SetCell(row, 5, tview.NewTableCell(qAge).SetTextColor(grey))
+		v.table.SetCell(row, 6, tview.NewTableCell(fmt.Sprintf("%d", queryCount)).SetTextColor(grey))
 		row++
 	}
 
