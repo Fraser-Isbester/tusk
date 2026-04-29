@@ -1,6 +1,6 @@
 TUSK_DB := postgres://postgres:postgres@localhost:5432/tuskdev?sslmode=disable
 
-.PHONY: build run dev db-up db-down db-reset db-psql workload workload-loop clean
+.PHONY: build run dev db-up db-down db-reset db-psql workload workload-loop loadtest clean
 
 ## Build
 build:
@@ -44,6 +44,10 @@ workload-loop:
 		docker exec -i tusk-postgres psql -U postgres -d tuskdev < scripts/workload.sql > /dev/null 2>&1; \
 		sleep 5; \
 	done
+
+## Full load test — concurrent OLTP, analytics, idle-in-txn, lock contention (default 60s)
+loadtest:
+	./scripts/loadtest.sh $(or $(DURATION),60)
 
 ## Clean build artifacts
 clean:

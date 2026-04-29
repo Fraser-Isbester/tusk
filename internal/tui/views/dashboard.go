@@ -3,14 +3,11 @@ package views
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/fraser-isbester/tusk/internal/db"
-	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
 
 const dashboardRefreshInterval = 2 * time.Second
@@ -37,24 +34,27 @@ type Dashboard struct {
 	queries    []db.ActiveQuery
 	conns      []db.ConnectionGroup
 	err        error
+
+	// TPS tracking — delta between snapshots
+	prevXactTotal int64
+	prevTime      time.Time
+	tps           int64
 }
 
 func NewDashboard(database *db.DB) *Dashboard {
 	cols := []table.Column{
-		{Title: "PID", Width: 8},
-		{Title: "USER", Width: 14},
-		{Title: "DURATION", Width: 10},
-		{Title: "STATE", Width: 12},
-		{Title: "WAIT", Width: 16},
-		{Title: "QUERY", Width: 50},
+		{Title: "PID", Width: 6},
+		{Title: "USER", Width: 10},
+		{Title: "APP", Width: 18},
+		{Title: "STATE", Width: 8},
+		{Title: "WAIT", Width: 18},
+		{Title: "DURATION", Width: 8},
 	}
-
 	t := table.New(
 		table.WithColumns(cols),
 		table.WithFocused(true),
 	)
 	t.SetStyles(defaultTableStyles())
-
 	return &Dashboard{db: database, table: t}
 }
 
@@ -62,8 +62,7 @@ func (d *Dashboard) SetSize(w, h int) {
 	d.width = w
 	d.height = h
 	d.table.SetWidth(w)
-	// Reserve lines for the info section above the table
-	tableH := h - 8
+	tableH := h - 2
 	if tableH < 3 {
 		tableH = 3
 	}
@@ -106,6 +105,21 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			d.stats = msg.stats
 			d.queries = msg.queries
 			d.conns = msg.conns
+
+			// Compute TPS as delta between snapshots.
+			if d.stats != nil {
+				now := time.Now()
+				total := d.stats.XactCommit + d.stats.XactRollback
+				if !d.prevTime.IsZero() {
+					elapsed := now.Sub(d.prevTime).Seconds()
+					if elapsed > 0 {
+						d.tps = int64(float64(total-d.prevXactTotal) / elapsed)
+					}
+				}
+				d.prevXactTotal = total
+				d.prevTime = now
+			}
+
 			d.updateRows()
 		}
 		if !d.paused {
@@ -140,87 +154,15 @@ func (d *Dashboard) View() string {
 		return fmt.Sprintf("  Error: %v", d.err)
 	}
 
-	label := lipgloss.NewStyle().Foreground(theme.ColorDim)
-	value := lipgloss.NewStyle().Foreground(theme.ColorFg)
-	green := lipgloss.NewStyle().Foreground(theme.ColorGreen)
-	yellow := lipgloss.NewStyle().Foreground(theme.ColorYellow)
-	red := lipgloss.NewStyle().Foreground(theme.ColorRed)
-
-	var b strings.Builder
-
-	// Server + connection info (compact, k9s-style key: value lines)
-	if d.serverInfo != nil {
-		ver := d.serverInfo.Version
-		if idx := strings.Index(ver, ","); idx > 0 {
-			ver = strings.TrimSpace(ver[:idx])
-		}
-		b.WriteString(fmt.Sprintf(" %s %s\n", label.Render("Server:"), value.Render(ver)))
-		b.WriteString(fmt.Sprintf(" %s %s\n", label.Render("Uptime:"), value.Render(formatDuration(d.serverInfo.Uptime))))
-	}
-
-	if d.conns != nil {
-		var active, idle, total int
-		for _, c := range d.conns {
-			total += c.Count
-			switch c.State {
-			case "active":
-				active += c.Count
-			case "idle":
-				idle += c.Count
-			}
-		}
-		maxConns := 0
-		if d.serverInfo != nil {
-			maxConns = d.serverInfo.MaxConnections
-		}
-		b.WriteString(fmt.Sprintf(" %s %s / %s / %s (max: %d)\n",
-			label.Render("Conns:"),
-			green.Render(fmt.Sprintf("%d active", active)),
-			yellow.Render(fmt.Sprintf("%d idle", idle)),
-			value.Render(fmt.Sprintf("%d total", total)),
-			maxConns,
-		))
-	}
-
-	if d.stats != nil {
-		ratio := d.stats.CacheHitRatio * 100
-		ratioStr := fmt.Sprintf("%.2f%%", ratio)
-		var styled string
-		switch {
-		case ratio >= 99:
-			styled = green.Render(ratioStr)
-		case ratio >= 95:
-			styled = yellow.Render(ratioStr)
-		default:
-			styled = red.Render(ratioStr)
-		}
-		b.WriteString(fmt.Sprintf(" %s %s   %s %s\n",
-			label.Render("Cache:"),
-			styled,
-			label.Render("TPS:"),
-			value.Render(fmt.Sprintf("%d", d.stats.XactCommit+d.stats.XactRollback)),
-		))
-	}
-
-	b.WriteString("\n")
-
-	// Active queries table
-	b.WriteString(d.table.View())
-
-	return b.String()
+	return d.table.View()
 }
 
 func (d *Dashboard) updateRows() {
 	var rows []table.Row
 	for _, q := range d.queries {
-		durStr := formatDuration(q.Duration)
-		switch {
-		case q.Duration >= 5*time.Second:
-			durStr = lipgloss.NewStyle().Foreground(theme.ColorRed).Render(durStr)
-		case q.Duration >= time.Second:
-			durStr = lipgloss.NewStyle().Foreground(theme.ColorYellow).Render(durStr)
-		default:
-			durStr = lipgloss.NewStyle().Foreground(theme.ColorGreen).Render(durStr)
+		durStr := ""
+		if q.Duration > 0 {
+			durStr = formatDuration(q.Duration)
 		}
 
 		wait := q.WaitEventType
@@ -228,15 +170,15 @@ func (d *Dashboard) updateRows() {
 			wait += ":" + q.WaitEvent
 		}
 
-		queryPreview := truncate(strings.ReplaceAll(q.Query, "\n", " "), 60)
+		stateStr := q.State
 
 		rows = append(rows, table.Row{
 			fmt.Sprintf("%d", q.PID),
 			q.User,
-			durStr,
-			q.State,
+			q.AppName,
+			stateStr,
 			wait,
-			queryPreview,
+			durStr,
 		})
 	}
 	d.table.SetRows(rows)

@@ -34,7 +34,7 @@ WHERE datname = current_database()
 const queryActiveQueries = `
 SELECT
     pid,
-    COALESCE(usename, ''),
+    COALESCE(usename, '(system)'),
     COALESCE(application_name, ''),
     COALESCE(client_addr::text, ''),
     COALESCE(state, ''),
@@ -64,7 +64,7 @@ ORDER BY pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(re
 
 const queryConnections = `
 SELECT
-    COALESCE(usename, ''),
+    COALESCE(usename, '(system)'),
     COALESCE(application_name, ''),
     COALESCE(state, ''),
     count(*) AS cnt

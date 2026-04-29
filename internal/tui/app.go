@@ -22,8 +22,14 @@ type viewModel interface {
 
 type serverInfoMsg struct {
 	version     string
+	uptime      time.Duration
 	connections int
 	maxConns    int
+	activeConns int
+	idleConns   int
+	idleTxnConns int
+	cacheHitRatio float64
+	xactTotal   int64
 	err         error
 }
 
@@ -39,8 +45,16 @@ type App struct {
 	height int
 
 	serverVersion string
+	serverUptime  time.Duration
 	connCount     int
 	connMax       int
+	activeConns   int
+	idleConns     int
+	idleTxnConns  int
+	cacheHitRatio float64
+	tps           int64
+	prevXactTotal int64
+	prevTime      time.Time
 
 	views      map[string]viewModel
 	activeView string
@@ -121,8 +135,24 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case serverInfoMsg:
 		if msg.err == nil {
 			a.serverVersion = msg.version
+			a.serverUptime = msg.uptime
 			a.connCount = msg.connections
 			a.connMax = msg.maxConns
+			a.activeConns = msg.activeConns
+			a.idleConns = msg.idleConns
+			a.idleTxnConns = msg.idleTxnConns
+			a.cacheHitRatio = msg.cacheHitRatio
+
+			// Compute TPS
+			now := time.Now()
+			if !a.prevTime.IsZero() && msg.xactTotal > a.prevXactTotal {
+				elapsed := now.Sub(a.prevTime).Seconds()
+				if elapsed > 0 {
+					a.tps = int64(float64(msg.xactTotal-a.prevXactTotal) / elapsed)
+				}
+			}
+			a.prevXactTotal = msg.xactTotal
+			a.prevTime = now
 		}
 		return a, a.tickServerInfo()
 
@@ -216,7 +246,6 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 	case "enter":
-		// Drill into query detail from dashboard or queries view
 		switch v := a.views[a.activeView].(type) {
 		case *views.Dashboard:
 			if q, ok := v.SelectedQuery(); ok {
@@ -227,6 +256,14 @@ func (a *App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if q, ok := v.SelectedQuery(); ok {
 				a.views["query-detail"] = views.NewQueryDetail(q)
 				return a, a.switchView("query-detail")
+			}
+		case *views.Connections:
+			if user, ok := v.SelectedUser(); ok {
+				qv := views.NewQueries(a.db)
+				qv.SetUserFilter(user)
+				qv.SetSize(a.width, a.height-6)
+				a.views["queries-filtered"] = qv
+				return a, a.switchView("queries-filtered")
 			}
 		}
 	}
@@ -301,63 +338,83 @@ func (a *App) View() string {
 
 // renderHeader renders k9s-style info lines at top with ASCII tusk art.
 func (a *App) renderHeader(w int) string {
-	label := lipgloss.NewStyle().Foreground(theme.ColorDim)
-	val := lipgloss.NewStyle().Foreground(theme.ColorFg)
+	lbl := lipgloss.NewStyle().Foreground(theme.ColorLabel)
+	val := lipgloss.NewStyle().Foreground(theme.ColorFgBright)
 	logoStyle := lipgloss.NewStyle().Foreground(theme.ColorLogo).Bold(true)
 	tuskArt := lipgloss.NewStyle().Foreground(theme.ColorLogo)
-	hintKeyStyle := theme.HintKey
-	hintLblStyle := theme.HintLabel
+	green := lipgloss.NewStyle().Foreground(theme.ColorGreen)
+	yellow := lipgloss.NewStyle().Foreground(theme.ColorYellow)
+	red := lipgloss.NewStyle().Foreground(theme.ColorRed)
+	hk := theme.HintKey
+	hl := theme.HintLabel
 
-	// ASCII tusk art (right column)
-	art := []string{
-		`  __,,  `,
-		` ( o\   `,
-		`  \  \  `,
-		`   )  ) `,
-	}
-
-	// Key hints (center column)
+	art := []string{`  __,,  `, ` ( o\   `, `  \  \  `, `   )  ) `, `        `, `        `}
 	hints := []string{
-		hintKeyStyle.Render("<:>") + hintLblStyle.Render(" Command"),
-		hintKeyStyle.Render("<?>") + hintLblStyle.Render(" Help"),
-		hintKeyStyle.Render("</>") + hintLblStyle.Render(" Filter"),
-		hintKeyStyle.Render("<p>") + hintLblStyle.Render(" Pause"),
+		hk.Render("<:>") + hl.Render(" Command"),
+		hk.Render("<?>") + hl.Render(" Help"),
+		hk.Render("</>") + hl.Render(" Filter"),
+		hk.Render("<p>") + hl.Render(" Pause"),
+		"",
+		"",
 	}
 
-	// Info lines (left column)
-	infoLine1 := " " + logoStyle.Render("Tusk")
-	if a.serverVersion != "" {
-		infoLine1 += "      " + val.Render(a.serverVersion)
-	}
-	infoLine2 := fmt.Sprintf(" %s %s", label.Render("Profile:"), val.Render(a.profile))
-	infoLine3 := ""
+	// Build connection string with color-coded breakdown
+	connStr := ""
 	if a.connMax > 0 {
-		infoLine3 = fmt.Sprintf(" %s %s",
-			label.Render("Conns:"),
-			val.Render(fmt.Sprintf("%d/%d", a.connCount, a.connMax)),
-		)
+		connStr = green.Render(fmt.Sprintf("%d active", a.activeConns))
+		connStr += val.Render(" / ") + yellow.Render(fmt.Sprintf("%d idle", a.idleConns))
+		if a.idleTxnConns > 0 {
+			connStr += val.Render(" / ") + red.Render(fmt.Sprintf("%d idle-in-txn", a.idleTxnConns))
+		}
+		connStr += val.Render(fmt.Sprintf(" / %d total", a.connCount))
 	}
-	infoLines := []string{infoLine1, infoLine2, infoLine3, ""}
 
-	// Compose: info on left, hints in center, tusk art on right
-	lines := make([]string, 4)
-	artWidth := 9 // visual width of the art column
-	for i := 0; i < 4; i++ {
+	// Cache hit ratio
+	cacheStr := "--"
+	if a.cacheHitRatio > 0 {
+		ratio := a.cacheHitRatio * 100
+		cacheStr = fmt.Sprintf("%.2f%%", ratio)
+		switch {
+		case ratio >= 99:
+			cacheStr = green.Render(cacheStr)
+		case ratio >= 95:
+			cacheStr = yellow.Render(cacheStr)
+		default:
+			cacheStr = red.Render(cacheStr)
+		}
+	}
+
+	// TPS
+	tpsStr := "--"
+	if a.tps > 0 {
+		tpsStr = val.Render(fmt.Sprintf("%d/s", a.tps))
+	}
+
+	uptimeStr := "--"
+	if a.serverUptime > 0 {
+		uptimeStr = views.FormatDuration(a.serverUptime)
+	}
+
+	infoLines := []string{
+		" " + logoStyle.Render("Tusk") + "      " + val.Render(a.serverVersion),
+		fmt.Sprintf(" %s %s", lbl.Render("Profile:"), val.Render(a.profile)),
+		fmt.Sprintf(" %s %s", lbl.Render("Uptime:"), val.Render(uptimeStr)),
+		fmt.Sprintf(" %s %s (max: %d)", lbl.Render("Conns:"), connStr, a.connMax),
+		fmt.Sprintf(" %s %s   %s %s", lbl.Render("Cache:"), cacheStr, lbl.Render("TPS:"), tpsStr),
+		"",
+	}
+
+	lines := make([]string, 6)
+	artWidth := 9
+	for i := range 6 {
 		left := infoLines[i]
-		center := ""
-		if i < len(hints) {
-			center = hints[i]
-		}
-		right := ""
-		if i < len(art) {
-			right = tuskArt.Render(art[i])
-		}
+		center := hints[i]
+		right := tuskArt.Render(art[i])
 
 		leftW := lipgloss.Width(left)
 		centerW := lipgloss.Width(center)
 
-		// Place center around column 40, right at far right
-		centerCol := 40
+		centerCol := 48
 		if centerCol < leftW+2 {
 			centerCol = leftW + 2
 		}
@@ -365,7 +422,6 @@ func (a *App) renderHeader(w int) string {
 		if gapLeft < 1 {
 			gapLeft = 1
 		}
-
 		gapRight := w - centerCol - centerW - artWidth
 		if gapRight < 1 {
 			gapRight = 1
@@ -484,8 +540,8 @@ func (a *App) switchView(name string) tea.Cmd {
 }
 
 func (a *App) resizeViews() {
-	// Header is 4 lines, crumbs is 1, status is 1 = 6 chrome lines
-	viewHeight := a.height - 6
+	// Header is 6 lines, crumbs is 1, status is 1 = 8 chrome lines
+	viewHeight := a.height - 8
 	if viewHeight < 1 {
 		viewHeight = 1
 	}
@@ -501,22 +557,43 @@ func (a *App) fetchServerInfo() tea.Cmd {
 		if err != nil {
 			return serverInfoMsg{err: err}
 		}
+		stats, err := a.db.GetDatabaseStats(ctx)
+		if err != nil {
+			return serverInfoMsg{err: err}
+		}
 		conns, err := a.db.GetConnections(ctx)
 		if err != nil {
 			return serverInfoMsg{err: err}
 		}
-		total := 0
+
+		var total, active, idle, idleTxn int
 		for _, c := range conns {
 			total += c.Count
+			switch c.State {
+			case "active":
+				active += c.Count
+			case "idle":
+				idle += c.Count
+			case "idle in transaction", "idle in transaction (aborted)":
+				idleTxn += c.Count
+			}
 		}
+
 		ver := info.Version
 		if idx := strings.Index(ver, ","); idx > 0 {
 			ver = strings.TrimSpace(ver[:idx])
 		}
+
 		return serverInfoMsg{
-			version:     ver,
-			connections: total,
-			maxConns:    info.MaxConnections,
+			version:       ver,
+			uptime:        info.Uptime,
+			connections:   total,
+			maxConns:      info.MaxConnections,
+			activeConns:   active,
+			idleConns:     idle,
+			idleTxnConns:  idleTxn,
+			cacheHitRatio: stats.CacheHitRatio,
+			xactTotal:     stats.XactCommit + stats.XactRollback,
 		}
 	}
 }
