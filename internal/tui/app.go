@@ -38,8 +38,9 @@ type App struct {
 	pages  *tview.Pages
 	prompt *tview.InputField
 
-	viewMap    map[string]View
-	activeView string
+	viewMap      map[string]View
+	activeView   string
+	queryHistory *db.QueryHistory
 	viewStack  []string
 	registry   *CommandRegistry
 
@@ -67,8 +68,9 @@ func NewApp(database *db.DB, profileName, profileColor string, readonly bool) *A
 		profile:  profileName,
 		color:    profileColor,
 		readonly: readonly,
-		viewMap:  make(map[string]View),
-		registry: NewCommandRegistry(),
+		viewMap:      make(map[string]View),
+		registry:     NewCommandRegistry(),
+		queryHistory: db.NewQueryHistory(50),
 	}
 
 	a.buildLayout()
@@ -115,13 +117,19 @@ func (a *App) buildLayout() {
 }
 
 func (a *App) registerViews() {
-	a.viewMap["queries"] = views.NewQueriesView(a.db)
+	qv := views.NewQueriesView(a.db)
+	qv.SetQueryHistory(a.queryHistory)
+	a.viewMap["queries"] = qv
+
+	tv := views.NewTransactionsView(a.db)
+	tv.SetQueryHistory(a.queryHistory)
+	a.viewMap["transactions"] = tv
+
 	a.viewMap["connections"] = views.NewConnectionsView(a.db)
 	a.viewMap["tables"] = views.NewTablesView(a.db)
 	a.viewMap["db"] = views.NewDatabasesView(a.db)
 	a.viewMap["roles"] = views.NewRolesView(a.db)
 	a.viewMap["slow"] = views.NewSlowQueriesView(a.db)
-	a.viewMap["transactions"] = views.NewTransactionsView(a.db)
 	a.viewMap["locks"] = views.NewLocksView(a.db)
 	a.viewMap["indexes"] = views.NewIndexesView(a.db)
 
@@ -389,7 +397,7 @@ func (a *App) wireNavigation() {
 	if qv, ok := a.viewMap["queries"].(*views.Queries); ok {
 		qv.Table().SetSelectedFunc(func(row, col int) {
 			if q, ok := qv.SelectedQuery(); ok {
-				detail := views.NewQueryDetailView(q, a.db)
+				detail := views.NewQueryDetailView(q, a.db, a.queryHistory)
 				a.showDetail("query-detail", detail)
 			}
 		})
@@ -429,7 +437,7 @@ func (a *App) wireNavigation() {
 					Duration: t.QueryDuration,
 					Query:    t.Query,
 				}
-				detail := views.NewQueryDetailView(q, a.db)
+				detail := views.NewQueryDetailView(q, a.db, a.queryHistory)
 				a.showDetail("txn-detail", detail)
 			}
 		})
