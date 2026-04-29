@@ -50,8 +50,15 @@ func (qd *QueryDetail) SetSize(w, h int) {
 	qd.width = w
 	qd.height = h
 
-	// The header section (metadata + separator) uses a fixed number of lines.
-	const headerLines = 10 // 8 fields + blank line + separator line
+	// The header section (metadata + separator) uses a variable number of lines.
+	headerLines := 10 // 8 fields + blank line + separator line
+	if qd.query.Comment.App != "" {
+		for _, v := range []string{qd.query.Comment.App, qd.query.Comment.Route, qd.query.Comment.Controller, qd.query.Comment.Action} {
+			if v != "" {
+				headerLines++
+			}
+		}
+	}
 	vpHeight := h - headerLines
 	if vpHeight < 1 {
 		vpHeight = 1
@@ -103,6 +110,23 @@ func (qd *QueryDetail) View() string {
 	durLabel := labelStyle.Render(fmt.Sprintf("%-*s", labelWidth, "Duration:"))
 	durValue := durationStyle.Render(formatDuration(qd.query.Duration))
 	b.WriteString(durLabel + durValue + "\n")
+
+	// SQLcommentor metadata (if present)
+	if qd.query.Comment.App != "" {
+		commentFields := []struct{ label, value string }{
+			{"App:", qd.query.Comment.App},
+			{"Route:", qd.query.Comment.Route},
+			{"Controller:", qd.query.Comment.Controller},
+			{"Action:", qd.query.Comment.Action},
+		}
+		for _, cf := range commentFields {
+			if cf.value != "" {
+				lbl := labelStyle.Render(fmt.Sprintf("%-*s", labelWidth, cf.label))
+				val := valueStyle.Render(cf.value)
+				b.WriteString(lbl + val + "\n")
+			}
+		}
+	}
 
 	// Blank line before separator
 	b.WriteString("\n")

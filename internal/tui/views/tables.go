@@ -36,14 +36,13 @@ type Tables struct {
 // NewTables creates a new Tables view.
 func NewTables(database *db.DB) *Tables {
 	cols := []table.Column{
-		{Title: "Schema", Width: 10},
-		{Title: "Name", Width: 20},
-		{Title: "Size", Width: 10},
-		{Title: "Live Rows", Width: 12},
-		{Title: "Dead Rows", Width: 12},
-		{Title: "Seq Scan", Width: 10},
-		{Title: "Idx Scan", Width: 10},
-		{Title: "Last Vacuum", Width: 14},
+		{Title: "SCHEMA", Width: 8},
+		{Title: "TABLE", Width: 16},
+		{Title: "SIZE", Width: 8},
+		{Title: "ROWS", Width: 8},
+		{Title: "DEAD%", Width: 6},
+		{Title: "SEQ/IDX", Width: 8},
+		{Title: "LAST VAC", Width: 10},
 	}
 
 	t := table.New(
@@ -127,7 +126,23 @@ func (v *Tables) updateRows() {
 	for _, t := range v.tables {
 		lastVac := timeAgo(t.LastVacuum)
 		if t.LastAutoVacuum != nil && (t.LastVacuum == nil || t.LastAutoVacuum.After(*t.LastVacuum)) {
-			lastVac = timeAgo(t.LastAutoVacuum) + " (auto)"
+			lastVac = timeAgo(t.LastAutoVacuum)
+		}
+
+		// Dead tuple percentage
+		total := t.LiveTuples + t.DeadTuples
+		if total == 0 {
+			total = 1
+		}
+		deadPct := float64(t.DeadTuples) / float64(total) * 100
+		deadStr := fmt.Sprintf("%.1f%%", deadPct)
+
+		// Seq/Idx scan ratio
+		var seqIdx string
+		if t.IdxScan == 0 {
+			seqIdx = "seq only"
+		} else {
+			seqIdx = fmt.Sprintf("%d/%d", t.SeqScan, t.IdxScan)
 		}
 
 		row := table.Row{
@@ -135,9 +150,8 @@ func (v *Tables) updateRows() {
 			t.Name,
 			formatSize(t.TotalSize),
 			fmt.Sprintf("%d", t.LiveTuples),
-			fmt.Sprintf("%d", t.DeadTuples),
-			fmt.Sprintf("%d", t.SeqScan),
-			fmt.Sprintf("%d", t.IdxScan),
+			deadStr,
+			seqIdx,
 			lastVac,
 		}
 		if v.filterValue == "" || rowContains(row, v.filterValue) {

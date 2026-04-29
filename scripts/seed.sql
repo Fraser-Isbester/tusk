@@ -2,6 +2,9 @@
 
 -- Create some schemas
 CREATE SCHEMA IF NOT EXISTS app;
+
+-- Enable pg_stat_statements for slow query tracking
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 CREATE SCHEMA IF NOT EXISTS analytics;
 
 -- Create roles
