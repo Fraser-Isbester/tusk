@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,7 @@ type Queries struct {
 	queries      []db.ActiveQuery
 	visibleData  []db.ActiveQuery
 	userFilter   string
+	filterText   string
 	queryHistory *db.QueryHistory
 	mu           sync.Mutex
 	ticker       *time.Ticker
@@ -163,6 +165,20 @@ func (v *Queries) render() {
 			durStr = formatDuration(q.Duration)
 		}
 
+		if v.filterText != "" {
+			match := false
+			searchText := strings.ToLower(v.filterText)
+			for _, val := range []string{pid, q.User, q.AppName, q.State, wait, durStr} {
+				if strings.Contains(strings.ToLower(val), searchText) {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+
 		color := tcell.ColorWhite
 		isIdleTxn := q.State == "idle in transaction" || q.State == "idle in transaction (aborted)"
 		isLongDur := q.Duration >= 30*time.Second
@@ -210,6 +226,14 @@ func (v *Queries) SelectedQuery() (db.ActiveQuery, bool) {
 		return db.ActiveQuery{}, false
 	}
 	return v.visibleData[idx], true
+}
+
+// SetFilter sets the filter text for searching across all columns.
+func (v *Queries) SetFilter(text string) {
+	v.mu.Lock()
+	v.filterText = text
+	v.mu.Unlock()
+	v.render()
 }
 
 // SetUserFilter restricts the view to queries from a specific user.

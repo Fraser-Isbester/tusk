@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,8 +17,9 @@ import (
 type Locks struct {
 	table  *tview.Table
 	db     *db.DB
-	data   []db.LockInfo
-	mu     sync.Mutex
+	data       []db.LockInfo
+	filterText string
+	mu         sync.Mutex
 	ticker *time.Ticker
 	done   chan struct{}
 }
@@ -87,6 +89,14 @@ func (v *Locks) SelectedLock() (db.LockInfo, bool) {
 	return v.data[idx], true
 }
 
+// SetFilter sets the filter text for searching across all columns.
+func (v *Locks) SetFilter(text string) {
+	v.mu.Lock()
+	v.filterText = text
+	v.mu.Unlock()
+	v.render()
+}
+
 func (v *Locks) refresh() {
 	ctx := context.Background()
 	data, err := v.db.GetLocks(ctx)
@@ -116,14 +126,32 @@ func (v *Locks) render() {
 		v.table.SetCell(0, col, cell)
 	}
 
-	for i, l := range v.data {
-		row := i + 1
+	row := 1
+	for _, l := range v.data {
+		blockedPid := fmt.Sprintf("%d", l.BlockedPID)
+		blockerPid := fmt.Sprintf("%d", l.BlockingPID)
+		wait := formatDuration(l.WaitDuration)
+
+		if v.filterText != "" {
+			match := false
+			searchText := strings.ToLower(v.filterText)
+			for _, val := range []string{blockedPid, blockerPid, l.LockType, l.Mode, wait, l.BlockingApp} {
+				if strings.Contains(strings.ToLower(val), searchText) {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+
 		values := []string{
-			fmt.Sprintf("%d", l.BlockedPID),
-			fmt.Sprintf("%d", l.BlockingPID),
+			blockedPid,
+			blockerPid,
 			l.LockType,
 			l.Mode,
-			formatDuration(l.WaitDuration),
+			wait,
 			l.BlockingApp,
 		}
 		for col, val := range values {
@@ -133,6 +161,7 @@ func (v *Locks) render() {
 			}
 			v.table.SetCell(row, col, cell)
 		}
+		row++
 	}
 
 	if sel > 0 && sel < v.table.GetRowCount() {

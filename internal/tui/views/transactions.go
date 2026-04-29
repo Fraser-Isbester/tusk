@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ type Transactions struct {
 	db           *db.DB
 	data         []db.Transaction
 	visibleData  []db.Transaction
+	filterText   string
 	queryHistory *db.QueryHistory
 	mu           sync.Mutex
 	ticker       *time.Ticker
@@ -82,6 +84,14 @@ func (v *Transactions) Stop() {
 	}
 }
 
+// SetFilter sets the filter text for searching across all columns.
+func (v *Transactions) SetFilter(text string) {
+	v.mu.Lock()
+	v.filterText = text
+	v.mu.Unlock()
+	v.render()
+}
+
 func (v *Transactions) refresh() {
 	ctx := context.Background()
 	data, err := v.db.GetTransactions(ctx)
@@ -120,6 +130,24 @@ func (v *Transactions) render() {
 		if txn.User == "(system)" {
 			continue
 		}
+		pid := fmt.Sprintf("%d", txn.PID)
+		txnAge := formatDuration(txn.XactDuration)
+		qAge := formatDuration(txn.QueryDuration)
+
+		if v.filterText != "" {
+			match := false
+			searchText := strings.ToLower(v.filterText)
+			for _, val := range []string{pid, txn.User, txn.AppName, txn.State, txnAge, qAge} {
+				if strings.Contains(strings.ToLower(val), searchText) {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+
 		v.visibleData = append(v.visibleData, txn)
 
 		isIdleTxn := txn.State == "idle in transaction" || txn.State == "idle in transaction (aborted)"
@@ -135,7 +163,7 @@ func (v *Transactions) render() {
 			rowColor = theme.ColorFg
 		}
 
-		v.table.SetCell(row, 0, tview.NewTableCell(fmt.Sprintf("%d", txn.PID)).SetTextColor(rowColor))
+		v.table.SetCell(row, 0, tview.NewTableCell(pid).SetTextColor(rowColor))
 		v.table.SetCell(row, 1, tview.NewTableCell(txn.User).SetTextColor(rowColor))
 		v.table.SetCell(row, 2, tview.NewTableCell(txn.AppName).SetTextColor(rowColor).SetExpansion(1))
 
@@ -145,13 +173,13 @@ func (v *Transactions) render() {
 		}
 		v.table.SetCell(row, 3, stateCell)
 
-		txnAgeCell := tview.NewTableCell(formatDuration(txn.XactDuration)).SetTextColor(rowColor)
+		txnAgeCell := tview.NewTableCell(txnAge).SetTextColor(rowColor)
 		if isLongTxn {
 			txnAgeCell.SetAttributes(tcell.AttrBlink)
 		}
 		v.table.SetCell(row, 4, txnAgeCell)
 
-		v.table.SetCell(row, 5, tview.NewTableCell(formatDuration(txn.QueryDuration)).SetTextColor(rowColor))
+		v.table.SetCell(row, 5, tview.NewTableCell(qAge).SetTextColor(rowColor))
 
 		queryCount := 1
 		if v.queryHistory != nil {

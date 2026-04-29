@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,8 +17,9 @@ import (
 type Indexes struct {
 	table  *tview.Table
 	db     *db.DB
-	data   []db.IndexInfo
-	mu     sync.Mutex
+	data       []db.IndexInfo
+	filterText string
+	mu         sync.Mutex
 	ticker *time.Ticker
 	done   chan struct{}
 }
@@ -68,6 +70,14 @@ func (v *Indexes) Stop() {
 	}
 }
 
+// SetFilter sets the filter text for searching across all columns.
+func (v *Indexes) SetFilter(text string) {
+	v.mu.Lock()
+	v.filterText = text
+	v.mu.Unlock()
+	v.render()
+}
+
 func (v *Indexes) refresh() {
 	ctx := context.Background()
 	data, err := v.db.GetIndexes(ctx)
@@ -97,8 +107,24 @@ func (v *Indexes) render() {
 		v.table.SetCell(0, col, cell)
 	}
 
-	for i, idx := range v.data {
-		row := i + 1
+	row := 1
+	for _, idx := range v.data {
+		scans := fmt.Sprintf("%d", idx.Scans)
+		size := formatSize(idx.Size)
+
+		if v.filterText != "" {
+			match := false
+			searchText := strings.ToLower(v.filterText)
+			for _, val := range []string{idx.Table, idx.IndexName, scans, size} {
+				if strings.Contains(strings.ToLower(val), searchText) {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
 
 		var rowColor tcell.Color
 		switch {
@@ -113,8 +139,8 @@ func (v *Indexes) render() {
 		values := []string{
 			idx.Table,
 			idx.IndexName,
-			fmt.Sprintf("%d", idx.Scans),
-			formatSize(idx.Size),
+			scans,
+			size,
 		}
 		for col, val := range values {
 			cell := tview.NewTableCell(val).SetTextColor(rowColor)
@@ -123,6 +149,7 @@ func (v *Indexes) render() {
 			}
 			v.table.SetCell(row, col, cell)
 		}
+		row++
 	}
 
 	if sel > 0 && sel < v.table.GetRowCount() {
