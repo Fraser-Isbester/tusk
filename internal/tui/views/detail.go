@@ -170,10 +170,10 @@ func NewQueryDetailView(q db.Query, dbConn *db.DB, history *db.QueryHistory, app
 	panes := &queryDetailPanes{
 		meta:  newTextPane("Info"),
 		query: newTextPane("Query"),
-		rules: newTextPane("Breaches"),
+		rules: newTextPane("Violations"),
 	}
 
-	// Middle row: query (left) + breaches (right)
+	// Middle row: query (left) + violations (right)
 	middle := tview.NewFlex().SetDirection(tview.FlexColumn).
 		AddItem(panes.query, 0, 2, false).
 		AddItem(panes.rules, 0, 1, false)
@@ -195,7 +195,7 @@ func NewQueryDetailView(q db.Query, dbConn *db.DB, history *db.QueryHistory, app
 	renderAll := func(query db.Query) {
 		renderMetaPane(panes.meta, query, history, statusMsg)
 		renderQueryPane(panes.query, query)
-		renderBreachesPane(panes.rules, query, engine)
+		renderViolationsPane(panes.rules, query, engine)
 		renderHistoryPane(panes.history, query, history)
 	}
 
@@ -378,44 +378,48 @@ func renderQueryPane(tv *tview.TextView, q db.Query) {
 	tv.SetText(highlightSQL(q.QueryText))
 }
 
-func renderBreachesPane(tv *tview.TextView, q db.Query, engine *rules.Engine) {
+func renderViolationsPane(tv *tview.TextView, q db.Query, engine *rules.Engine) {
 	if engine == nil {
 		tv.SetText("[#808080]No rules engine[-]")
 		return
 	}
 
-	breaches := engine.RecentBreaches()
-	var matching []rules.Breach
-	for _, b := range breaches {
-		if b.PID == q.PID {
-			matching = append(matching, b)
+	violations := engine.RecentViolations()
+	var matching []rules.Violation
+	for _, v := range violations {
+		if v.PID == q.PID {
+			matching = append(matching, v)
 		}
 	}
 
 	if len(matching) == 0 {
-		tv.SetText("[#808080]No breaches for PID " + fmt.Sprintf("%d", q.PID) + "[-]")
+		tv.SetText("[#808080]No violations for PID " + fmt.Sprintf("%d", q.PID) + "[-]")
 		return
 	}
 
 	var b strings.Builder
-	for _, br := range matching {
-		status := "dry-run"
-		statusColor := "#808080"
-		if br.Error != "" {
-			status = "error"
-			statusColor = "#FF5F5F"
-		} else if br.Actioned {
-			status = "fired"
-			statusColor = "#FF5F5F"
-		} else if !br.Active {
-			status = "completed"
-			statusColor = "#808080"
+	for _, v := range matching {
+		b.WriteString(fmt.Sprintf("[#D78700::b]%s[-:-:-]\n", v.RuleName))
+		for _, evt := range v.Events {
+			ts := evt.Time.Format("15:04:05.00")
+			color := "#808080"
+			switch evt.Kind {
+			case rules.EventDetected:
+				color = "#FFD700"
+			case rules.EventAction:
+				color = "#D78700"
+			case rules.EventSent:
+				color = "#FF5F5F"
+			case rules.EventError:
+				color = "#FF5F5F"
+			case rules.EventCooldown:
+				color = "#585858"
+			case rules.EventClosed:
+				color = "#585858"
+			}
+			b.WriteString(fmt.Sprintf("  [#808080]%s[-]  [%s]%s[-]\n", ts, color, evt.Message))
 		}
-
-		b.WriteString(fmt.Sprintf("[#D78700]%s[-]\n", br.RuleName))
-		b.WriteString(fmt.Sprintf("  [#808080]%s[-]\n", br.Expression))
-		b.WriteString(fmt.Sprintf("  action: %s  status: [%s]%s[-]\n", br.Action, statusColor, status))
-		b.WriteString(fmt.Sprintf("  [#808080]%s[-]\n\n", br.Timestamp.Format("15:04:05")))
+		b.WriteString("\n")
 	}
 	tv.SetText(b.String())
 }

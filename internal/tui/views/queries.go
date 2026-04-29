@@ -171,10 +171,10 @@ func (v *Queries) render() {
 
 	headers := []string{"PID", "USER", "APP", "QHASH", "STATE", "WAIT", "DURATION", "STMTS", "BLOCKED", "RULES"}
 
-	// Get breached PIDs for this tick
-	var breachedPIDs map[int]rules.Breach
+	// Get violated PIDs for this tick
+	var violatedPIDs map[int]rules.Violation
 	if v.engine != nil {
-		breachedPIDs = v.engine.BreachedPIDs()
+		violatedPIDs = v.engine.ViolatedPIDs()
 	}
 	for i, h := range headers {
 		cell := tview.NewTableCell(h).
@@ -265,10 +265,10 @@ func (v *Queries) render() {
 		v.table.SetCell(row, 8, tview.NewTableCell(blockedStr).SetTextColor(color))
 
 		ruleStr := ""
-		if b, ok := breachedPIDs[q.PID]; ok {
-			ruleStr = b.RuleName + " " + breachIcon(b)
+		if viol, ok := violatedPIDs[q.PID]; ok {
+			ruleStr = viol.RuleName + " " + violationIcon(viol)
 		}
-		v.table.SetCell(row, 9, tview.NewTableCell(ruleStr).SetTextColor(breachColor(breachedPIDs, q.PID)))
+		v.table.SetCell(row, 9, tview.NewTableCell(ruleStr).SetTextColor(violationColor(violatedPIDs, q.PID)))
 		row++
 	}
 
@@ -360,7 +360,7 @@ func (v *Queries) SetQueryHistory(h *db.QueryHistory) {
 	v.queryHistory = h
 }
 
-// SetEngine sets the rules engine for breach indicators.
+// SetEngine sets the rules engine for violation indicators.
 func (v *Queries) SetEngine(e *rules.Engine) {
 	v.engine = e
 }

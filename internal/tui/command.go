@@ -23,13 +23,12 @@ func NewCommandRegistry() *CommandRegistry {
 			{Name: "tables", Aliases: []string{"table", "tbl"}, ViewName: "tables"},
 			{Name: "connections", Aliases: []string{"conn", "conns"}, ViewName: "connections"},
 			{Name: "db", Aliases: []string{"database", "databases"}, ViewName: "db"},
-			{Name: "roles", Aliases: []string{"role", "users"}, ViewName: "roles"},
 			{Name: "slow", Aliases: []string{"slowqueries"}, ViewName: "slow"},
 			{Name: "transactions", Aliases: []string{"txn", "tx"}, ViewName: "transactions"},
 			{Name: "locks", Aliases: []string{"lock"}, ViewName: "locks"},
 			{Name: "indexes", Aliases: []string{"idx", "index"}, ViewName: "indexes"},
 			{Name: "rules", Aliases: []string{"rule"}, ViewName: "rules"},
-			{Name: "breaches", Aliases: []string{"breach"}, ViewName: "breaches"},
+			{Name: "violations", Aliases: []string{"violation", "v"}, ViewName: "violations"},
 		},
 	}
 }

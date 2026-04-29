@@ -118,24 +118,22 @@ func (v *Rules) render() {
 		return
 	}
 
-	breachedPIDs := v.engine.BreachedPIDs()
-	recentBreaches := v.engine.RecentBreaches()
+	violatedPIDs := v.engine.ViolatedPIDs()
+	recentViolations := v.engine.RecentViolations()
 
 	for i, r := range configuredRules {
 		row := i + 1
 
-		// Count active breaches for this rule
-		breachCount := 0
-		for _, b := range recentBreaches {
-			if b.RuleName == r.Name {
-				breachCount++
+		violationCount := 0
+		for _, viol := range recentViolations {
+			if viol.RuleName == r.Name {
+				violationCount++
 			}
 		}
 
-		// Count currently breached PIDs for this rule
 		activePIDs := 0
-		for _, b := range breachedPIDs {
-			if b.RuleName == r.Name {
+		for _, viol := range violatedPIDs {
+			if viol.RuleName == r.Name {
 				activePIDs++
 			}
 		}
@@ -161,11 +159,11 @@ func (v *Rules) render() {
 			statusColor = theme.ColorDim
 		}
 
-		breachStr := fmt.Sprintf("%d", breachCount)
-		breachColor := theme.ColorFg
+		violStr := fmt.Sprintf("%d", violationCount)
+		violColor := theme.ColorFg
 		if activePIDs > 0 {
-			breachStr = fmt.Sprintf("%d (%d active)", breachCount, activePIDs)
-			breachColor = theme.ColorRed
+			violStr = fmt.Sprintf("%d (%d active)", violationCount, activePIDs)
+			violColor = theme.ColorRed
 		}
 
 		rowColor := theme.ColorFg
@@ -179,7 +177,7 @@ func (v *Rules) render() {
 		v.table.SetCell(row, 3, tview.NewTableCell(r.Action.Name()).SetTextColor(rowColor))
 		v.table.SetCell(row, 4, tview.NewTableCell(cooldown).SetTextColor(rowColor))
 		v.table.SetCell(row, 5, tview.NewTableCell(status).SetTextColor(statusColor))
-		v.table.SetCell(row, 6, tview.NewTableCell(breachStr).SetTextColor(breachColor))
+		v.table.SetCell(row, 6, tview.NewTableCell(violStr).SetTextColor(violColor))
 	}
 
 	if sel > 0 && sel < v.table.GetRowCount() {
