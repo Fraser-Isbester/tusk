@@ -280,8 +280,8 @@ func renderQueryDetail(tv *tview.TextView, q db.ActiveQuery, history *db.QueryHi
 		comment.Framework = q.Comment.Framework
 	}
 
+	// Show tags inline in the header area
 	if comment.App != "" || comment.Route != "" || comment.Controller != "" || comment.Action != "" || comment.Framework != "" {
-		b.WriteString(separator("Tags"))
 		var tags []string
 		if comment.App != "" {
 			tags = append(tags, fmt.Sprintf("[#00D7FF]app=[white]%s[-]", comment.App))
@@ -298,7 +298,7 @@ func renderQueryDetail(tv *tview.TextView, q db.ActiveQuery, history *db.QueryHi
 		if comment.Framework != "" {
 			tags = append(tags, fmt.Sprintf("[#00D7FF]framework=[white]%s[-]", comment.Framework))
 		}
-		b.WriteString(strings.Join(tags, "  ") + "\n")
+		b.WriteString(fmt.Sprintf("[#D78700]%-16s[-] %s\n", "Tags:", strings.Join(tags, "  ")))
 	}
 
 	// Current query with syntax highlighting.

@@ -153,9 +153,9 @@ func (v *Transactions) render() {
 
 		v.table.SetCell(row, 5, tview.NewTableCell(formatDuration(txn.QueryDuration)).SetTextColor(rowColor))
 
-		queryCount := ""
+		queryCount := "1"
 		if v.queryHistory != nil {
-			if entries := v.queryHistory.Get(txn.PID); len(entries) > 1 {
+			if entries := v.queryHistory.Get(txn.PID); len(entries) > 0 {
 				queryCount = fmt.Sprintf("%d", len(entries))
 			}
 		}

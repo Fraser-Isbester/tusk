@@ -190,9 +190,9 @@ func (v *Queries) render() {
 		}
 		v.table.SetCell(row, 5, durCell)
 
-		stmtCount := ""
+		stmtCount := "1"
 		if v.queryHistory != nil {
-			if entries := v.queryHistory.Get(q.PID); len(entries) > 1 {
+			if entries := v.queryHistory.Get(q.PID); len(entries) > 0 {
 				stmtCount = fmt.Sprintf("%d", len(entries))
 			}
 		}
