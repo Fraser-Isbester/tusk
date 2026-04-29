@@ -113,11 +113,12 @@ func (v *Transactions) render() {
 		}
 		v.visibleData = append(v.visibleData, txn)
 
+		isIdleTxn := txn.State == "idle in transaction" || txn.State == "idle in transaction (aborted)"
+		isLongTxn := txn.XactDuration >= 60*time.Second
+
 		var rowColor tcell.Color
 		switch {
-		case txn.State == "idle in transaction":
-			rowColor = theme.ColorRed
-		case txn.XactDuration >= 60*time.Second:
+		case isIdleTxn || isLongTxn:
 			rowColor = theme.ColorRed
 		case txn.XactDuration >= 30*time.Second:
 			rowColor = theme.ColorYellow
@@ -125,21 +126,23 @@ func (v *Transactions) render() {
 			rowColor = theme.ColorFg
 		}
 
-		values := []string{
-			fmt.Sprintf("%d", txn.PID),
-			txn.User,
-			txn.AppName,
-			txn.State,
-			formatDuration(txn.XactDuration),
-			formatDuration(txn.QueryDuration),
+		v.table.SetCell(row, 0, tview.NewTableCell(fmt.Sprintf("%d", txn.PID)).SetTextColor(rowColor))
+		v.table.SetCell(row, 1, tview.NewTableCell(txn.User).SetTextColor(rowColor))
+		v.table.SetCell(row, 2, tview.NewTableCell(txn.AppName).SetTextColor(rowColor).SetExpansion(1))
+
+		stateCell := tview.NewTableCell(txn.State).SetTextColor(rowColor)
+		if isIdleTxn {
+			stateCell.SetAttributes(tcell.AttrBlink)
 		}
-		for col, val := range values {
-			cell := tview.NewTableCell(val).SetTextColor(rowColor)
-			if col == 2 {
-				cell.SetExpansion(1)
-			}
-			v.table.SetCell(row, col, cell)
+		v.table.SetCell(row, 3, stateCell)
+
+		txnAgeCell := tview.NewTableCell(formatDuration(txn.XactDuration)).SetTextColor(rowColor)
+		if isLongTxn {
+			txnAgeCell.SetAttributes(tcell.AttrBlink)
 		}
+		v.table.SetCell(row, 4, txnAgeCell)
+
+		v.table.SetCell(row, 5, tview.NewTableCell(formatDuration(txn.QueryDuration)).SetTextColor(rowColor))
 		row++
 	}
 

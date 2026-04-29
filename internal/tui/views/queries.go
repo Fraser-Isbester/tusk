@@ -160,9 +160,9 @@ func (v *Queries) render() {
 		}
 
 		color := tcell.ColorWhite
-		if q.State == "idle in transaction" || q.State == "idle in transaction (aborted)" {
-			color = theme.ColorRed
-		} else if q.Duration >= 30*time.Second {
+		isIdleTxn := q.State == "idle in transaction" || q.State == "idle in transaction (aborted)"
+		isLongDur := q.Duration >= 30*time.Second
+		if isIdleTxn || isLongDur {
 			color = theme.ColorRed
 		} else if q.Duration >= 1*time.Second {
 			color = theme.ColorYellow
@@ -171,9 +171,20 @@ func (v *Queries) render() {
 		v.table.SetCell(row, 0, tview.NewTableCell(pid).SetTextColor(color))
 		v.table.SetCell(row, 1, tview.NewTableCell(q.User).SetTextColor(color))
 		v.table.SetCell(row, 2, tview.NewTableCell(q.AppName).SetTextColor(color).SetExpansion(1))
-		v.table.SetCell(row, 3, tview.NewTableCell(q.State).SetTextColor(color))
+
+		stateCell := tview.NewTableCell(q.State).SetTextColor(color)
+		if isIdleTxn {
+			stateCell.SetAttributes(tcell.AttrBlink)
+		}
+		v.table.SetCell(row, 3, stateCell)
+
 		v.table.SetCell(row, 4, tview.NewTableCell(wait).SetTextColor(color).SetExpansion(1))
-		v.table.SetCell(row, 5, tview.NewTableCell(durStr).SetTextColor(color))
+
+		durCell := tview.NewTableCell(durStr).SetTextColor(color)
+		if isLongDur {
+			durCell.SetAttributes(tcell.AttrBlink)
+		}
+		v.table.SetCell(row, 5, durCell)
 		row++
 	}
 
