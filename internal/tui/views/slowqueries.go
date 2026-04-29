@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,8 +17,9 @@ import (
 type SlowQueries struct {
 	table  *tview.Table
 	db     *db.DB
-	data   []db.SlowQuery
-	mu     sync.Mutex
+	data       []db.SlowQuery
+	filterText string
+	mu         sync.Mutex
 	ticker *time.Ticker
 	done   chan struct{}
 }
@@ -68,6 +70,14 @@ func (v *SlowQueries) Stop() {
 	}
 }
 
+// SetFilter sets the filter text for searching across all columns.
+func (v *SlowQueries) SetFilter(text string) {
+	v.mu.Lock()
+	v.filterText = text
+	v.mu.Unlock()
+	v.render()
+}
+
 func (v *SlowQueries) refresh() {
 	ctx := context.Background()
 	data, err := v.db.GetSlowQueries(ctx)
@@ -97,8 +107,8 @@ func (v *SlowQueries) render() {
 		v.table.SetCell(0, col, cell)
 	}
 
-	for i, s := range v.data {
-		row := i + 1
+	row := 1
+	for _, s := range v.data {
 		rowsPerCall := int64(0)
 		if s.Calls > 0 {
 			rowsPerCall = s.Rows / s.Calls
@@ -118,13 +128,32 @@ func (v *SlowQueries) render() {
 			meanStr = fmt.Sprintf("%.0fms", s.MeanTime)
 		}
 
+		calls := fmt.Sprintf("%d", s.Calls)
+		rowsStr := fmt.Sprintf("%d", rowsPerCall)
+		hitStr := fmt.Sprintf("%.1f%%", s.HitRatio*100)
+		queryStr := truncate(s.Query, 80)
+
+		if v.filterText != "" {
+			match := false
+			searchText := strings.ToLower(v.filterText)
+			for _, val := range []string{queryStr, calls, totalStr, meanStr, rowsStr, hitStr} {
+				if strings.Contains(strings.ToLower(val), searchText) {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+
 		values := []string{
-			truncate(s.Query, 80),
-			fmt.Sprintf("%d", s.Calls),
+			queryStr,
+			calls,
 			totalStr,
 			meanStr,
-			fmt.Sprintf("%d", rowsPerCall),
-			fmt.Sprintf("%.1f%%", s.HitRatio*100),
+			rowsStr,
+			hitStr,
 		}
 		for col, val := range values {
 			cell := tview.NewTableCell(val).SetTextColor(theme.ColorFg)
@@ -133,6 +162,7 @@ func (v *SlowQueries) render() {
 			}
 			v.table.SetCell(row, col, cell)
 		}
+		row++
 	}
 
 	if sel > 0 && sel < v.table.GetRowCount() {

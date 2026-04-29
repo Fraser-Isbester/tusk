@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,8 +17,9 @@ import (
 type Connections struct {
 	table *tview.Table
 	db    *db.DB
-	conns []db.ConnectionGroup
-	mu    sync.Mutex
+	conns      []db.ConnectionGroup
+	filterText string
+	mu         sync.Mutex
 	ticker *time.Ticker
 	done   chan struct{}
 }
@@ -87,6 +89,14 @@ func (v *Connections) SelectedUser() (string, bool) {
 	return v.conns[idx].User, true
 }
 
+// SetFilter sets the filter text for searching across all columns.
+func (v *Connections) SetFilter(text string) {
+	v.mu.Lock()
+	v.filterText = text
+	v.mu.Unlock()
+	v.render()
+}
+
 func (v *Connections) refresh() {
 	ctx := context.Background()
 	conns, err := v.db.GetConnections(ctx)
@@ -118,14 +128,29 @@ func (v *Connections) render() {
 		v.table.SetCell(0, i, cell)
 	}
 
-	for i, c := range v.conns {
-		row := i + 1
-		color := tcell.ColorWhite
+	row := 1
+	for _, c := range v.conns {
+		count := fmt.Sprintf("%d", c.Count)
 
+		if v.filterText != "" {
+			match := false
+			searchText := strings.ToLower(v.filterText)
+			for _, val := range []string{c.User, c.AppName, c.State, count} {
+				if strings.Contains(strings.ToLower(val), searchText) {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+
+		color := tcell.ColorWhite
 		v.table.SetCell(row, 0, tview.NewTableCell(c.User).SetTextColor(color))
 		v.table.SetCell(row, 1, tview.NewTableCell(c.AppName).SetTextColor(color).SetExpansion(1))
 		v.table.SetCell(row, 2, tview.NewTableCell(c.State).SetTextColor(color))
-		v.table.SetCell(row, 3, tview.NewTableCell(fmt.Sprintf("%d", c.Count)).SetTextColor(color))
+		v.table.SetCell(row, 3, tview.NewTableCell(count).SetTextColor(color))
 		row++
 	}
 

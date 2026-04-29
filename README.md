@@ -4,8 +4,8 @@ A postgres admin TUI, built with Go inspired by k9s. This is not a Database clie
 ## Core Types
 
 ### Core: Runtime
-- Connection: A connection to a Postgres database
-- Transaction: A transaction within a connection
+- Session: An auth connection to a Postgres database
+- Transaction: A transaction within a session
 - Query: A SQL query executed within a transaction
 - Role: A database role (user or group)
 

@@ -21,6 +21,7 @@ type View interface {
 	Start(app *tview.Application)
 	Stop()
 	ItemCount() int
+	SetFilter(text string)
 }
 
 // App is the root TUI application.
@@ -36,7 +37,10 @@ type App struct {
 	crumbs *tview.TextView
 	status *tview.TextView
 	pages  *tview.Pages
-	prompt *tview.InputField
+
+	cmdPrompt   *tview.InputField
+	filterInput *tview.InputField
+	filterBox   *tview.Flex
 
 	viewMap      map[string]View
 	activeView   string
@@ -59,6 +63,8 @@ type App struct {
 
 	promptActive bool
 	promptMode   string
+	filterActive bool
+	filterText   string
 }
 
 func NewApp(database *db.DB, profileName, profileColor string, readonly bool) *App {
@@ -99,11 +105,24 @@ func (a *App) buildLayout() {
 		SetTextAlign(tview.AlignLeft)
 	a.status.SetBackgroundColor(theme.ColorHeaderBg)
 
-	a.prompt = tview.NewInputField().
+	a.cmdPrompt = tview.NewInputField().
 		SetLabel(": ").
 		SetFieldBackgroundColor(tcell.ColorDefault).
 		SetLabelColor(theme.ColorLogo)
-	a.prompt.SetBackgroundColor(tcell.ColorDefault)
+	a.cmdPrompt.SetBackgroundColor(tcell.ColorDefault)
+
+	a.filterInput = tview.NewInputField().
+		SetLabel("/ ").
+		SetLabelColor(theme.ColorLogo).
+		SetFieldBackgroundColor(tcell.ColorDefault).
+		SetFieldTextColor(tcell.ColorWhite)
+	a.filterInput.SetBackgroundColor(tcell.ColorDefault)
+
+	a.filterBox = tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(a.filterInput, 1, 0, true)
+	a.filterBox.SetBorder(true).
+		SetBorderColor(theme.ColorBorder).
+		SetBackgroundColor(tcell.ColorDefault)
 
 	a.pages = tview.NewPages()
 	a.pages.SetBackgroundColor(tcell.ColorDefault)
@@ -159,6 +178,19 @@ func (a *App) switchView(name string) {
 
 func (a *App) setupKeys() {
 	a.app.SetInputCapture(func(evt *tcell.EventKey) *tcell.EventKey {
+		// When filter input is active, handle Esc/Enter specially
+		if a.filterActive {
+			switch evt.Key() {
+			case tcell.KeyEscape:
+				a.hideFilter(true)
+				return nil
+			case tcell.KeyEnter:
+				a.hideFilter(false)
+				return nil
+			}
+			return evt
+		}
+
 		if a.promptActive {
 			return evt
 		}
@@ -183,7 +215,7 @@ func (a *App) setupKeys() {
 				a.showPrompt("command")
 				return nil
 			case '/':
-				a.showPrompt("filter")
+				a.showFilter()
 				return nil
 			case 'q':
 				a.app.Stop()
@@ -200,28 +232,21 @@ func (a *App) setupKeys() {
 func (a *App) showPrompt(mode string) {
 	a.promptActive = true
 	a.promptMode = mode
-	if mode == "command" {
-		a.prompt.SetLabel(": ")
-	} else {
-		a.prompt.SetLabel("/ ")
-	}
-	a.prompt.SetText("")
+	a.cmdPrompt.SetText("")
 
 	a.layout.RemoveItem(a.pages)
 	a.layout.RemoveItem(a.status)
-	a.layout.AddItem(a.prompt, 1, 0, true)
+	a.layout.AddItem(a.cmdPrompt, 1, 0, true)
 	a.layout.AddItem(a.pages, 0, 1, false)
 	a.layout.AddItem(a.status, 1, 0, false)
-	a.app.SetFocus(a.prompt)
+	a.app.SetFocus(a.cmdPrompt)
 
-	a.prompt.SetDoneFunc(func(key tcell.Key) {
-		text := a.prompt.GetText()
+	a.cmdPrompt.SetDoneFunc(func(key tcell.Key) {
+		text := a.cmdPrompt.GetText()
 		a.hidePrompt()
 		if key == tcell.KeyEnter && text != "" {
-			if a.promptMode == "command" {
-				if viewName, ok := a.registry.Match(text); ok {
-					a.switchView(viewName)
-				}
+			if viewName, ok := a.registry.Match(text); ok {
+				a.switchView(viewName)
 			}
 		}
 	})
@@ -229,7 +254,47 @@ func (a *App) showPrompt(mode string) {
 
 func (a *App) hidePrompt() {
 	a.promptActive = false
-	a.layout.RemoveItem(a.prompt)
+	a.layout.RemoveItem(a.cmdPrompt)
+	if v, ok := a.viewMap[a.activeView]; ok {
+		a.app.SetFocus(v.Table())
+	}
+}
+
+func (a *App) showFilter() {
+	a.filterActive = true
+	a.filterInput.SetText("")
+	a.filterText = ""
+
+	a.filterInput.SetChangedFunc(func(text string) {
+		a.filterText = text
+		if v, ok := a.viewMap[a.activeView]; ok {
+			v.SetFilter(text)
+		}
+		a.updateCrumbs()
+	})
+
+	// Insert filterBox between crumbs and pages
+	a.layout.RemoveItem(a.pages)
+	a.layout.RemoveItem(a.status)
+	a.layout.AddItem(a.filterBox, 3, 0, true)
+	a.layout.AddItem(a.pages, 0, 1, false)
+	a.layout.AddItem(a.status, 1, 0, false)
+	a.app.SetFocus(a.filterInput)
+}
+
+func (a *App) hideFilter(clear bool) {
+	a.filterActive = false
+	a.layout.RemoveItem(a.filterBox)
+
+	if clear {
+		a.filterText = ""
+		a.filterInput.SetText("")
+		if v, ok := a.viewMap[a.activeView]; ok {
+			v.SetFilter("")
+		}
+	}
+
+	a.updateCrumbs()
 	if v, ok := a.viewMap[a.activeView]; ok {
 		a.app.SetFocus(v.Table())
 	}
@@ -295,7 +360,11 @@ func (a *App) updateCrumbs() {
 	if v, ok := a.viewMap[a.activeView]; ok {
 		count = v.ItemCount()
 	}
-	a.crumbs.SetText(fmt.Sprintf("[#00D7FF::b]%s(%d)[-:-:-]", a.activeView, count))
+	text := fmt.Sprintf("[#00D7FF::b]%s(%d)[-:-:-]", a.activeView, count)
+	if a.filterText != "" {
+		text += fmt.Sprintf(" [#808080]filter: %s[-]", a.filterText)
+	}
+	a.crumbs.SetText(text)
 }
 
 func (a *App) updateStatus() {

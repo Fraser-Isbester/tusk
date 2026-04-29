@@ -2,6 +2,7 @@ package views
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,8 +16,9 @@ import (
 type Databases struct {
 	table     *tview.Table
 	db        *db.DB
-	databases []db.DatabaseInfo
-	mu        sync.Mutex
+	databases  []db.DatabaseInfo
+	filterText string
+	mu         sync.Mutex
 	ticker    *time.Ticker
 	done      chan struct{}
 }
@@ -74,6 +76,14 @@ func (v *Databases) Stop() {
 	}
 }
 
+// SetFilter sets the filter text for searching across all columns.
+func (v *Databases) SetFilter(text string) {
+	v.mu.Lock()
+	v.filterText = text
+	v.mu.Unlock()
+	v.render()
+}
+
 func (v *Databases) refresh() {
 	ctx := context.Background()
 	databases, err := v.db.GetDatabases(ctx)
@@ -105,13 +115,29 @@ func (v *Databases) render() {
 		v.table.SetCell(0, i, cell)
 	}
 
-	for i, d := range v.databases {
-		row := i + 1
-		color := tcell.ColorWhite
+	row := 1
+	for _, d := range v.databases {
+		sizeStr := formatSize(d.Size)
 
+		if v.filterText != "" {
+			match := false
+			searchText := strings.ToLower(v.filterText)
+			for _, val := range []string{d.Name, sizeStr, d.Owner} {
+				if strings.Contains(strings.ToLower(val), searchText) {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+
+		color := tcell.ColorWhite
 		v.table.SetCell(row, 0, tview.NewTableCell(d.Name).SetTextColor(color).SetExpansion(1))
-		v.table.SetCell(row, 1, tview.NewTableCell(formatSize(d.Size)).SetTextColor(color))
+		v.table.SetCell(row, 1, tview.NewTableCell(sizeStr).SetTextColor(color))
 		v.table.SetCell(row, 2, tview.NewTableCell(d.Owner).SetTextColor(color))
+		row++
 	}
 
 	if selectedRow > 0 && selectedRow < v.table.GetRowCount() {

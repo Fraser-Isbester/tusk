@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,8 +17,9 @@ import (
 type Tables struct {
 	table  *tview.Table
 	db     *db.DB
-	data   []db.TableInfo
-	mu     sync.Mutex
+	data       []db.TableInfo
+	filterText string
+	mu         sync.Mutex
 	ticker *time.Ticker
 	done   chan struct{}
 }
@@ -80,6 +82,14 @@ func (v *Tables) SelectedTable() (db.TableInfo, bool) {
 	return v.data[idx], true
 }
 
+// SetFilter sets the filter text for searching across all columns.
+func (v *Tables) SetFilter(text string) {
+	v.mu.Lock()
+	v.filterText = text
+	v.mu.Unlock()
+	v.render()
+}
+
 func (v *Tables) refresh() {
 	ctx := context.Background()
 	data, err := v.db.GetTables(ctx)
@@ -109,9 +119,8 @@ func (v *Tables) render() {
 		v.table.SetCell(0, col, cell)
 	}
 
-	for i, t := range v.data {
-		row := i + 1
-
+	row := 1
+	for _, t := range v.data {
 		// Dead tuple percentage
 		var deadPct float64
 		total := t.LiveTuples + t.DeadTuples
@@ -134,6 +143,23 @@ func (v *Tables) render() {
 			lastVac = timeAgo(t.LastAutoVacuum)
 		}
 
+		sizeStr := formatSize(t.TotalSize)
+		rows := fmt.Sprintf("%d", t.LiveTuples)
+
+		if v.filterText != "" {
+			match := false
+			searchText := strings.ToLower(v.filterText)
+			for _, val := range []string{t.Schema, t.Name, sizeStr, rows, deadStr, seqIdx, lastVac} {
+				if strings.Contains(strings.ToLower(val), searchText) {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+
 		// Row color
 		var rowColor tcell.Color
 		switch {
@@ -148,8 +174,8 @@ func (v *Tables) render() {
 		values := []string{
 			t.Schema,
 			t.Name,
-			formatSize(t.TotalSize),
-			fmt.Sprintf("%d", t.LiveTuples),
+			sizeStr,
+			rows,
 			deadStr,
 			seqIdx,
 			lastVac,
@@ -161,6 +187,7 @@ func (v *Tables) render() {
 			}
 			v.table.SetCell(row, col, cell)
 		}
+		row++
 	}
 
 	if sel > 0 && sel < v.table.GetRowCount() {

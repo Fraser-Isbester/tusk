@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,8 +17,9 @@ import (
 type Roles struct {
 	table  *tview.Table
 	db     *db.DB
-	roles  []db.RoleInfo
-	mu     sync.Mutex
+	roles      []db.RoleInfo
+	filterText string
+	mu         sync.Mutex
 	ticker *time.Ticker
 	done   chan struct{}
 }
@@ -87,6 +89,14 @@ func (v *Roles) SelectedRole() (string, bool) {
 	return v.roles[idx].Name, true
 }
 
+// SetFilter sets the filter text for searching across all columns.
+func (v *Roles) SetFilter(text string) {
+	v.mu.Lock()
+	v.filterText = text
+	v.mu.Unlock()
+	v.render()
+}
+
 func (v *Roles) refresh() {
 	ctx := context.Background()
 	roles, err := v.db.GetRoles(ctx)
@@ -118,8 +128,8 @@ func (v *Roles) render() {
 		v.table.SetCell(0, i, cell)
 	}
 
-	for i, r := range v.roles {
-		row := i + 1
+	row := 1
+	for _, r := range v.roles {
 		color := tcell.ColorWhite
 
 		connLimit := fmt.Sprintf("%d", r.ConnLimit)
@@ -127,12 +137,32 @@ func (v *Roles) render() {
 			connLimit = "unlimited"
 		}
 
+		superuser := boolIcon(r.IsSuperuser)
+		createrole := boolIcon(r.CanCreateRole)
+		createdb := boolIcon(r.CanCreateDB)
+		login := boolIcon(r.CanLogin)
+
+		if v.filterText != "" {
+			match := false
+			searchText := strings.ToLower(v.filterText)
+			for _, val := range []string{r.Name, superuser, createrole, createdb, login, connLimit} {
+				if strings.Contains(strings.ToLower(val), searchText) {
+					match = true
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+		}
+
 		v.table.SetCell(row, 0, tview.NewTableCell(r.Name).SetTextColor(color).SetExpansion(1))
-		v.table.SetCell(row, 1, tview.NewTableCell(boolIcon(r.IsSuperuser)).SetTextColor(color))
-		v.table.SetCell(row, 2, tview.NewTableCell(boolIcon(r.CanCreateRole)).SetTextColor(color))
-		v.table.SetCell(row, 3, tview.NewTableCell(boolIcon(r.CanCreateDB)).SetTextColor(color))
-		v.table.SetCell(row, 4, tview.NewTableCell(boolIcon(r.CanLogin)).SetTextColor(color))
+		v.table.SetCell(row, 1, tview.NewTableCell(superuser).SetTextColor(color))
+		v.table.SetCell(row, 2, tview.NewTableCell(createrole).SetTextColor(color))
+		v.table.SetCell(row, 3, tview.NewTableCell(createdb).SetTextColor(color))
+		v.table.SetCell(row, 4, tview.NewTableCell(login).SetTextColor(color))
 		v.table.SetCell(row, 5, tview.NewTableCell(connLimit).SetTextColor(color))
+		row++
 	}
 
 	if selectedRow > 0 && selectedRow < v.table.GetRowCount() {
