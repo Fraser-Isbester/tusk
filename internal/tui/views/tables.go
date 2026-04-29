@@ -119,7 +119,7 @@ func (v *Tables) View() string {
 		return fmt.Sprintf("Error: %v", v.err)
 	}
 
-	return v.table.View()
+	return TableBorder.Render(v.table.View())
 }
 
 func (v *Tables) updateRows() {

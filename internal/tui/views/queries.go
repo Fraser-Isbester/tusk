@@ -148,12 +148,16 @@ func (q *Queries) View() string {
 		return fmt.Sprintf("Error: %v", q.err)
 	}
 
-	return q.table.View()
+	return TableBorder.Render(q.table.View())
 }
 
 func (q *Queries) updateRows() {
 	var rows []table.Row
 	for _, aq := range q.queries {
+		// Hide system processes.
+		if aq.User == "(system)" {
+			continue
+		}
 		// Skip queries not matching user filter.
 		if q.userFilter != "" && aq.User != q.userFilter {
 			continue

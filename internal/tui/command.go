@@ -19,7 +19,6 @@ type CommandRegistry struct {
 func NewCommandRegistry() *CommandRegistry {
 	return &CommandRegistry{
 		commands: []Command{
-			{Name: "dashboard", Aliases: []string{"dash", "home"}, ViewName: "dashboard"},
 			{Name: "queries", Aliases: []string{"query", "q"}, ViewName: "queries"},
 			{Name: "tables", Aliases: []string{"table", "tbl"}, ViewName: "tables"},
 			{Name: "connections", Aliases: []string{"conn", "conns"}, ViewName: "connections"},
