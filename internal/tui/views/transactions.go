@@ -102,7 +102,7 @@ func (v *Transactions) render() {
 	sel, _ := v.table.GetSelection()
 	v.table.Clear()
 
-	headers := []string{"PID", "USER", "APP", "STATE", "TXN AGE", "Q AGE", "QUERIES"}
+	headers := []string{"PID", "USER", "APP", "STATE", "TXN AGE", "Q AGE", "STMTS"}
 	for col, h := range headers {
 		cell := tview.NewTableCell(h).
 			SetTextColor(theme.ColorTableHeader).
