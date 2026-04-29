@@ -108,6 +108,31 @@ type LockInfo struct {
 	BlockingQuery string
 }
 
+// ColumnInfo describes a single column in a table.
+type ColumnInfo struct {
+	Name      string
+	DataType  string
+	Nullable  bool
+	Default   string
+	IsPrimary bool
+}
+
+// TableDetail holds detailed information about a single table.
+type TableDetail struct {
+	Schema         string
+	Name           string
+	TotalSize      int64
+	LiveTuples     int64
+	DeadTuples     int64
+	SeqScan        int64
+	IdxScan        int64
+	LastVacuum     *time.Time
+	LastAutoVacuum *time.Time
+	LastAnalyze    *time.Time
+	Columns        []ColumnInfo
+	Indexes        []IndexInfo
+}
+
 // IndexInfo holds per-index statistics from pg_stat_user_indexes.
 type IndexInfo struct {
 	Schema    string

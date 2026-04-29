@@ -14,12 +14,13 @@ import (
 
 // Transactions is the transaction monitor view.
 type Transactions struct {
-	table  *tview.Table
-	db     *db.DB
-	data   []db.Transaction
-	mu     sync.Mutex
-	ticker *time.Ticker
-	done   chan struct{}
+	table       *tview.Table
+	db          *db.DB
+	data        []db.Transaction
+	visibleData []db.Transaction
+	mu          sync.Mutex
+	ticker      *time.Ticker
+	done        chan struct{}
 }
 
 // NewTransactionsView creates a new Transactions view.
@@ -104,11 +105,13 @@ func (v *Transactions) render() {
 		v.table.SetCell(0, col, cell)
 	}
 
+	v.visibleData = v.visibleData[:0]
 	row := 1
 	for _, txn := range v.data {
 		if txn.User == "(system)" {
 			continue
 		}
+		v.visibleData = append(v.visibleData, txn)
 
 		var rowColor tcell.Color
 		switch {
@@ -143,6 +146,18 @@ func (v *Transactions) render() {
 	if sel > 0 && sel < v.table.GetRowCount() {
 		v.table.Select(sel, 0)
 	}
+}
+
+// SelectedTransaction returns the transaction at the currently selected row.
+func (v *Transactions) SelectedTransaction() (db.Transaction, bool) {
+	row, _ := v.table.GetSelection()
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	idx := row - 1
+	if idx < 0 || idx >= len(v.visibleData) {
+		return db.Transaction{}, false
+	}
+	return v.visibleData[idx], true
 }
 
 func (v *Transactions) terminateSelected() {

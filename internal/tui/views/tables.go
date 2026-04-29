@@ -68,6 +68,18 @@ func (v *Tables) Stop() {
 	}
 }
 
+// SelectedTable returns the table info at the currently selected row.
+func (v *Tables) SelectedTable() (db.TableInfo, bool) {
+	row, _ := v.table.GetSelection()
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	idx := row - 1
+	if idx < 0 || idx >= len(v.data) {
+		return db.TableInfo{}, false
+	}
+	return v.data[idx], true
+}
+
 func (v *Tables) refresh() {
 	ctx := context.Background()
 	data, err := v.db.GetTables(ctx)

@@ -147,6 +147,43 @@ FROM pg_stat_user_indexes
 ORDER BY idx_scan ASC
 `
 
+const queryTableStats = `
+SELECT
+    schemaname,
+    relname,
+    pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(relname)) AS total_size,
+    n_live_tup,
+    n_dead_tup,
+    seq_scan,
+    idx_scan,
+    last_vacuum,
+    last_autovacuum,
+    last_analyze
+FROM pg_stat_user_tables
+WHERE schemaname = $1 AND relname = $2
+`
+
+const queryTableColumns = `
+SELECT column_name, data_type, is_nullable, COALESCE(column_default, '')
+FROM information_schema.columns
+WHERE table_schema = $1 AND table_name = $2
+ORDER BY ordinal_position
+`
+
+const queryTablePrimaryKeys = `
+SELECT a.attname
+FROM pg_index i
+JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+WHERE i.indrelid = (quote_ident($1) || '.' || quote_ident($2))::regclass
+  AND i.indisprimary
+`
+
+const queryTableIndexes = `
+SELECT indexrelname, idx_scan, pg_relation_size(indexrelid)
+FROM pg_stat_user_indexes
+WHERE schemaname = $1 AND relname = $2
+`
+
 const queryCancelBackend = `SELECT pg_cancel_backend($1)`
 const queryTerminateBackend = `SELECT pg_terminate_backend($1)`
 
@@ -507,4 +544,96 @@ func (d *DB) TerminateBackend(ctx context.Context, pid int) error {
 		return fmt.Errorf("pg_terminate_backend(%d) returned false", pid)
 	}
 	return nil
+}
+
+// GetTableDetail returns detailed information about a single table including
+// columns, indexes, and statistics.
+func (d *DB) GetTableDetail(ctx context.Context, schema, name string) (*TableDetail, error) {
+	// Get table stats
+	row := d.pool.QueryRow(ctx, queryTableStats, schema, name)
+	var (
+		td             TableDetail
+		lastVacuum     sql.NullTime
+		lastAutoVacuum sql.NullTime
+		lastAnalyze    sql.NullTime
+	)
+	if err := row.Scan(
+		&td.Schema, &td.Name, &td.TotalSize,
+		&td.LiveTuples, &td.DeadTuples,
+		&td.SeqScan, &td.IdxScan,
+		&lastVacuum, &lastAutoVacuum, &lastAnalyze,
+	); err != nil {
+		return nil, fmt.Errorf("querying table stats for %s.%s: %w", schema, name, err)
+	}
+	if lastVacuum.Valid {
+		td.LastVacuum = &lastVacuum.Time
+	}
+	if lastAutoVacuum.Valid {
+		td.LastAutoVacuum = &lastAutoVacuum.Time
+	}
+	if lastAnalyze.Valid {
+		td.LastAnalyze = &lastAnalyze.Time
+	}
+
+	// Get columns
+	colRows, err := d.pool.Query(ctx, queryTableColumns, schema, name)
+	if err != nil {
+		return nil, fmt.Errorf("querying columns for %s.%s: %w", schema, name, err)
+	}
+	defer colRows.Close()
+
+	for colRows.Next() {
+		var (
+			c          ColumnInfo
+			isNullable string
+		)
+		if err := colRows.Scan(&c.Name, &c.DataType, &isNullable, &c.Default); err != nil {
+			return nil, fmt.Errorf("scanning column row: %w", err)
+		}
+		c.Nullable = isNullable == "YES"
+		td.Columns = append(td.Columns, c)
+	}
+	if err := colRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating column rows: %w", err)
+	}
+
+	// Get primary key columns
+	pkRows, err := d.pool.Query(ctx, queryTablePrimaryKeys, schema, name)
+	if err == nil {
+		defer pkRows.Close()
+		pkSet := make(map[string]bool)
+		for pkRows.Next() {
+			var attname string
+			if err := pkRows.Scan(&attname); err == nil {
+				pkSet[attname] = true
+			}
+		}
+		for i := range td.Columns {
+			if pkSet[td.Columns[i].Name] {
+				td.Columns[i].IsPrimary = true
+			}
+		}
+	}
+
+	// Get indexes
+	idxRows, err := d.pool.Query(ctx, queryTableIndexes, schema, name)
+	if err != nil {
+		return nil, fmt.Errorf("querying indexes for %s.%s: %w", schema, name, err)
+	}
+	defer idxRows.Close()
+
+	for idxRows.Next() {
+		var idx IndexInfo
+		if err := idxRows.Scan(&idx.IndexName, &idx.Scans, &idx.Size); err != nil {
+			return nil, fmt.Errorf("scanning index row: %w", err)
+		}
+		idx.Schema = schema
+		idx.Table = name
+		td.Indexes = append(td.Indexes, idx)
+	}
+	if err := idxRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating index rows: %w", err)
+	}
+
+	return &td, nil
 }
