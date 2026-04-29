@@ -102,7 +102,7 @@ func (v *Transactions) render() {
 	sel, _ := v.table.GetSelection()
 	v.table.Clear()
 
-	headers := []string{"PID", "USER", "APP", "STATE", "TXN AGE", "Q AGE"}
+	headers := []string{"PID", "USER", "APP", "STATE", "TXN AGE", "Q AGE", "QUERIES"}
 	for col, h := range headers {
 		cell := tview.NewTableCell(h).
 			SetTextColor(theme.ColorTableHeader).
@@ -152,6 +152,14 @@ func (v *Transactions) render() {
 		v.table.SetCell(row, 4, txnAgeCell)
 
 		v.table.SetCell(row, 5, tview.NewTableCell(formatDuration(txn.QueryDuration)).SetTextColor(rowColor))
+
+		queryCount := ""
+		if v.queryHistory != nil {
+			if entries := v.queryHistory.Get(txn.PID); len(entries) > 1 {
+				queryCount = fmt.Sprintf("%d", len(entries))
+			}
+		}
+		v.table.SetCell(row, 6, tview.NewTableCell(queryCount).SetTextColor(rowColor))
 		row++
 	}
 

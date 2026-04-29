@@ -130,7 +130,7 @@ func (v *Queries) render() {
 
 	v.table.Clear()
 
-	headers := []string{"PID", "USER", "APP", "STATE", "WAIT", "DURATION"}
+	headers := []string{"PID", "USER", "APP", "STATE", "WAIT", "DURATION", "STMTS"}
 	for i, h := range headers {
 		cell := tview.NewTableCell(h).
 			SetTextColor(theme.ColorTableHeader).
@@ -189,6 +189,14 @@ func (v *Queries) render() {
 			durCell.SetAttributes(tcell.AttrBlink)
 		}
 		v.table.SetCell(row, 5, durCell)
+
+		stmtCount := ""
+		if v.queryHistory != nil {
+			if entries := v.queryHistory.Get(q.PID); len(entries) > 1 {
+				stmtCount = fmt.Sprintf("%d", len(entries))
+			}
+		}
+		v.table.SetCell(row, 6, tview.NewTableCell(stmtCount).SetTextColor(color))
 		row++
 	}
 

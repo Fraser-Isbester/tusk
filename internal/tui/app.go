@@ -397,7 +397,7 @@ func (a *App) wireNavigation() {
 	if qv, ok := a.viewMap["queries"].(*views.Queries); ok {
 		qv.Table().SetSelectedFunc(func(row, col int) {
 			if q, ok := qv.SelectedQuery(); ok {
-				detail := views.NewQueryDetailView(q, a.db, a.queryHistory)
+				detail := views.NewQueryDetailView(q, a.db, a.queryHistory, a.app)
 				a.showDetail("query-detail", detail)
 			}
 		})
@@ -437,7 +437,7 @@ func (a *App) wireNavigation() {
 					Duration: t.QueryDuration,
 					Query:    t.Query,
 				}
-				detail := views.NewQueryDetailView(q, a.db, a.queryHistory)
+				detail := views.NewQueryDetailView(q, a.db, a.queryHistory, a.app)
 				a.showDetail("txn-detail", detail)
 			}
 		})
