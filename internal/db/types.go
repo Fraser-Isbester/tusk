@@ -30,6 +30,8 @@ type ActiveQuery struct {
 	Duration      time.Duration
 	Query         string
 	Comment       SQLComment
+	BlockedBy     int   // PID blocking this query, 0 if not blocked
+	QueryID       int64 // normalized query fingerprint (PG14+ query_id)
 }
 
 // ConnectionGroup is an aggregated view of connections sharing the same
@@ -91,6 +93,7 @@ type Transaction struct {
 	XactDuration  time.Duration
 	QueryDuration time.Duration
 	Query         string
+	LockCount     int // number of locks held by this transaction
 }
 
 // LockInfo describes a blocked lock and the backend blocking it.

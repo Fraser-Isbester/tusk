@@ -164,6 +164,11 @@ func NewQueryDetailView(q db.ActiveQuery, dbConn *db.DB, history *db.QueryHistor
 
 	renderWithStatus(q)
 
+	// Don't live-refresh completed queries — the data is frozen
+	if q.State == "completed" {
+		return tv
+	}
+
 	pid := q.PID
 	done := make(chan struct{})
 	var closeOnce sync.Once

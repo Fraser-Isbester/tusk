@@ -167,13 +167,13 @@ func (v *Queries) render() {
 
 	v.table.Clear()
 
-	headers := []string{"PID", "USER", "APP", "STATE", "WAIT", "DURATION", "STMTS"}
+	headers := []string{"PID", "USER", "APP", "QHASH", "STATE", "WAIT", "DURATION", "STMTS", "BLOCKED"}
 	for i, h := range headers {
 		cell := tview.NewTableCell(h).
 			SetTextColor(theme.ColorTableHeader).
 			SetAttributes(tcell.AttrBold).
 			SetSelectable(false)
-		if i == 2 || i == 4 {
+		if i == 2 || i == 5 { // APP and WAIT expand
 			cell.SetExpansion(1)
 		}
 		v.table.SetCell(0, i, cell)
@@ -226,22 +226,35 @@ func (v *Queries) render() {
 			color = theme.ColorYellow
 		}
 
+		qhash := ""
+		if q.QueryID != 0 {
+			qhash = fmt.Sprintf("%x", uint64(q.QueryID))
+			if len(qhash) > 8 {
+				qhash = qhash[:8]
+			}
+		}
+
 		v.table.SetCell(row, 0, tview.NewTableCell(pid).SetTextColor(color))
 		v.table.SetCell(row, 1, tview.NewTableCell(q.User).SetTextColor(color))
 		v.table.SetCell(row, 2, tview.NewTableCell(q.AppName).SetTextColor(color).SetExpansion(1))
-
-		v.table.SetCell(row, 3, tview.NewTableCell(q.State).SetTextColor(color))
-
-		v.table.SetCell(row, 4, tview.NewTableCell(wait).SetTextColor(color).SetExpansion(1))
+		v.table.SetCell(row, 3, tview.NewTableCell(qhash).SetTextColor(theme.ColorDim))
+		v.table.SetCell(row, 4, tview.NewTableCell(q.State).SetTextColor(color))
+		v.table.SetCell(row, 5, tview.NewTableCell(wait).SetTextColor(color).SetExpansion(1))
 
 		durCell := tview.NewTableCell(durStr).SetTextColor(color)
 		if isLongDur {
 			durCell.SetAttributes(tcell.AttrBlink)
 		}
-		v.table.SetCell(row, 5, durCell)
+		v.table.SetCell(row, 6, durCell)
 
 		stmtCount := countStatements(q.Query)
-		v.table.SetCell(row, 6, tview.NewTableCell(fmt.Sprintf("%d", stmtCount)).SetTextColor(color))
+		v.table.SetCell(row, 7, tview.NewTableCell(fmt.Sprintf("%d", stmtCount)).SetTextColor(color))
+
+		blockedStr := ""
+		if q.BlockedBy > 0 {
+			blockedStr = fmt.Sprintf("%d", q.BlockedBy)
+		}
+		v.table.SetCell(row, 8, tview.NewTableCell(blockedStr).SetTextColor(color))
 		row++
 	}
 
@@ -274,14 +287,24 @@ func (v *Queries) render() {
 			durStr = formatDuration(q.Duration)
 		}
 
+		qhash := ""
+		if q.QueryID != 0 {
+			qhash = fmt.Sprintf("%x", uint64(q.QueryID))
+			if len(qhash) > 8 {
+				qhash = qhash[:8]
+			}
+		}
+
 		v.table.SetCell(row, 0, tview.NewTableCell(pid).SetTextColor(grey))
 		v.table.SetCell(row, 1, tview.NewTableCell(q.User).SetTextColor(grey))
 		v.table.SetCell(row, 2, tview.NewTableCell(q.AppName).SetTextColor(grey).SetExpansion(1))
-		v.table.SetCell(row, 3, tview.NewTableCell("completed").SetTextColor(grey))
-		v.table.SetCell(row, 4, tview.NewTableCell("").SetTextColor(grey).SetExpansion(1))
-		v.table.SetCell(row, 5, tview.NewTableCell(durStr).SetTextColor(grey))
+		v.table.SetCell(row, 3, tview.NewTableCell(qhash).SetTextColor(grey))
+		v.table.SetCell(row, 4, tview.NewTableCell("completed").SetTextColor(grey))
+		v.table.SetCell(row, 5, tview.NewTableCell("").SetTextColor(grey).SetExpansion(1))
+		v.table.SetCell(row, 6, tview.NewTableCell(durStr).SetTextColor(grey))
 		stmtCount := countStatements(q.Query)
-		v.table.SetCell(row, 6, tview.NewTableCell(fmt.Sprintf("%d", stmtCount)).SetTextColor(grey))
+		v.table.SetCell(row, 7, tview.NewTableCell(fmt.Sprintf("%d", stmtCount)).SetTextColor(grey))
+		v.table.SetCell(row, 8, tview.NewTableCell("").SetTextColor(grey))
 		row++
 	}
 

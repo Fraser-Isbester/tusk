@@ -39,6 +39,7 @@ type App struct {
 	pages  *tview.Pages
 
 	cmdPrompt   *tview.InputField
+	cmdBox      *tview.Flex
 	filterInput *tview.InputField
 	filterBox   *tview.Flex
 
@@ -63,6 +64,7 @@ type App struct {
 
 	promptActive bool
 	promptMode   string
+	tuskColorIdx int // cycles for tusk color animation
 	filterActive bool
 	filterText   string
 }
@@ -111,6 +113,12 @@ func (a *App) buildLayout() {
 		SetLabelColor(theme.ColorLogo)
 	a.cmdPrompt.SetBackgroundColor(tcell.ColorDefault)
 
+	a.cmdBox = tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(a.cmdPrompt, 1, 0, true)
+	a.cmdBox.SetBorder(true).
+		SetBorderColor(theme.ColorBorder).
+		SetBackgroundColor(tcell.ColorDefault)
+
 	a.filterInput = tview.NewInputField().
 		SetLabel("/ ").
 		SetLabelColor(theme.ColorLogo).
@@ -128,7 +136,7 @@ func (a *App) buildLayout() {
 	a.pages.SetBackgroundColor(tcell.ColorDefault)
 
 	a.layout = tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(a.header, 6, 0, false).
+		AddItem(a.header, 8, 0, false).
 		AddItem(a.crumbs, 1, 0, false).
 		AddItem(a.pages, 0, 1, true).
 		AddItem(a.status, 1, 0, false)
@@ -236,7 +244,7 @@ func (a *App) showPrompt(mode string) {
 
 	a.layout.RemoveItem(a.pages)
 	a.layout.RemoveItem(a.status)
-	a.layout.AddItem(a.cmdPrompt, 1, 0, true)
+	a.layout.AddItem(a.cmdBox, 3, 0, true)
 	a.layout.AddItem(a.pages, 0, 1, false)
 	a.layout.AddItem(a.status, 1, 0, false)
 	a.app.SetFocus(a.cmdPrompt)
@@ -254,7 +262,7 @@ func (a *App) showPrompt(mode string) {
 
 func (a *App) hidePrompt() {
 	a.promptActive = false
-	a.layout.RemoveItem(a.cmdPrompt)
+	a.layout.RemoveItem(a.cmdBox)
 	if v, ok := a.viewMap[a.activeView]; ok {
 		a.app.SetFocus(v.Table())
 	}
@@ -311,15 +319,21 @@ func (a *App) updateHeader() {
 	y := "[#FFD700]"
 	r := "[#FF5F5F]"
 
-	var lines []string
-	lines = append(lines, fmt.Sprintf(" %sTusk[-]      %s%s[-]", c, v, a.serverVersion))
-	lines = append(lines, fmt.Sprintf(" %sProfile:[-] %s%s[-]", l, v, a.profile))
+	// TUSK in big open letters (figlet "big" style)
+	o := "[#D78700]"
+	logo := []string{
+		o + tview.Escape("  _______  _    _   _____  _  __") + "[-]",
+		o + tview.Escape(" |__   __|| |  | | / ____|| |/ /") + "[-]",
+		o + tview.Escape("    | |   | |  | || (___  | ' / ") + "[-]",
+		o + tview.Escape("    | |   | |  | | \\___ \\ |  <  ") + "[-]",
+		o + tview.Escape("    | |   | |__| | ____) || . \\ ") + "[-]",
+		o + tview.Escape("    |_|    \\____/ |_____/ |_|\\_\\") + "[-]",
+	}
 
 	uptimeStr := "--"
 	if a.serverUptime > 0 {
 		uptimeStr = views.FormatDuration(a.serverUptime)
 	}
-	lines = append(lines, fmt.Sprintf(" %sUptime:[-]  %s%s[-]", l, v, uptimeStr))
 
 	connParts := fmt.Sprintf("%s%d active[-]", g, a.activeConns)
 	if a.idleConns > 0 {
@@ -332,7 +346,6 @@ func (a *App) updateHeader() {
 	if other > 0 {
 		connParts += fmt.Sprintf(" / %d other", other)
 	}
-	lines = append(lines, fmt.Sprintf(" %sConns:[-]   %s (max: %d)", l, connParts, a.connMax))
 
 	cacheStr := "--"
 	if a.cacheHitRatio > 0 {
@@ -349,8 +362,42 @@ func (a *App) updateHeader() {
 	if a.tps > 0 {
 		tpsStr = fmt.Sprintf("%d/s", a.tps)
 	}
-	lines = append(lines, fmt.Sprintf(" %sCache:[-]   %s   %sTPS:[-] %s%s[-]", l, cacheStr, l, v, tpsStr))
-	lines = append(lines, "")
+
+	infoLines := []string{
+		"",
+		fmt.Sprintf(" %sTusk[-]      %s%s[-]", c, v, a.serverVersion),
+		fmt.Sprintf(" %sProfile:[-] %s%s[-]", l, v, a.profile),
+		fmt.Sprintf(" %sUptime:[-]  %s%s[-]", l, v, uptimeStr),
+		fmt.Sprintf(" %sConns:[-]   %s (max: %d)", l, connParts, a.connMax),
+		fmt.Sprintf(" %sCache:[-]   %s   %sTPS:[-] %s%s[-]", l, cacheStr, l, v, tpsStr),
+		"",
+		"",
+	}
+
+	// Get terminal width for right-justification
+	_, _, headerWidth, _ := a.header.GetInnerRect()
+	if headerWidth <= 0 {
+		headerWidth = 120
+	}
+	logoWidth := 33 // visual width of the big letters
+
+	var lines []string
+	for i := 0; i < len(infoLines) || i < len(logo); i++ {
+		left := ""
+		if i < len(infoLines) {
+			left = infoLines[i]
+		}
+		if i < len(logo) {
+			leftVisual := tview.TaggedStringWidth(left)
+			pad := headerWidth - leftVisual - logoWidth
+			if pad < 2 {
+				pad = 2
+			}
+			lines = append(lines, left+strings.Repeat(" ", pad)+logo[i])
+		} else {
+			lines = append(lines, left)
+		}
+	}
 
 	a.header.SetText(strings.Join(lines, "\n"))
 }
