@@ -3,138 +3,109 @@ package views
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/evertras/bubble-table/table"
 	"github.com/fraser-isbester/tusk/internal/db"
 	"github.com/fraser-isbester/tusk/internal/tui/theme"
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
 )
-
-const tablesRefreshInterval = 5 * time.Second
-
-// tablesDataMsg carries fetched table data.
-type tablesDataMsg struct {
-	tables []db.TableInfo
-	err    error
-}
-
-// tablesTickMsg triggers the next fetch cycle.
-type tablesTickMsg struct{}
 
 // Tables is the tables view.
 type Tables struct {
-	db          *db.DB
-	table       table.Model
-	width       int
-	height      int
-	paused      bool
-	filterValue string
-	tables      []db.TableInfo
-	err         error
+	table  *tview.Table
+	db     *db.DB
+	data   []db.TableInfo
+	mu     sync.Mutex
+	ticker *time.Ticker
+	done   chan struct{}
 }
 
-// NewTables creates a new Tables view.
-func NewTables(database *db.DB) *Tables {
-	cols := []table.Column{
-		table.NewColumn("schema", "SCHEMA", 8),
-		table.NewFlexColumn("table", "TABLE", 1),
-		table.NewColumn("size", "SIZE", 8),
-		table.NewColumn("rows", "ROWS", 8),
-		table.NewColumn("dead", "DEAD%", 6),
-		table.NewColumn("seqidx", "SEQ/IDX", 8),
-		table.NewColumn("lastvac", "LAST VAC", 10),
-	}
-	t := table.New(cols).
-		Focused(true).
-		WithPageSize(20).
-		Border(NoBorder).
-		WithNoPagination().
-		HeaderStyle(HeaderStyle).
-		HighlightStyle(HighlightStyle)
-	return &Tables{
+// NewTablesView creates a new Tables view.
+func NewTablesView(database *db.DB) *Tables {
+	v := &Tables{
+		table: tview.NewTable().SetSelectable(true, false).SetFixed(1, 0).SetSelectedStyle(theme.SelectedStyle),
 		db:    database,
-		table: t,
 	}
+	v.table.SetBackgroundColor(tcell.ColorDefault)
+	v.table.SetBorder(false)
+	return v
 }
 
-// SetSize updates the terminal dimensions.
-func (v *Tables) SetSize(w, h int) {
-	v.width = w
-	v.height = h
-	v.table = v.table.WithTargetWidth(w).WithPageSize(h - 2)
-}
+// Table returns the underlying tview.Table.
+func (v *Tables) Table() *tview.Table { return v.table }
 
 // ItemCount returns the number of tables.
-func (v *Tables) ItemCount() int { return len(v.tables) }
+func (v *Tables) ItemCount() int { v.mu.Lock(); defer v.mu.Unlock(); return len(v.data) }
 
-// Init starts the first data fetch.
-func (v *Tables) Init() tea.Cmd {
-	return v.fetchData()
-}
-
-// Update handles messages.
-func (v *Tables) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tablesDataMsg:
-		if msg.err != nil {
-			v.err = msg.err
-		} else {
-			v.err = nil
-			v.tables = msg.tables
-			v.updateRows()
-		}
-		if !v.paused {
-			return v, v.tick()
-		}
-		return v, nil
-
-	case tablesTickMsg:
-		if !v.paused {
-			return v, v.fetchData()
-		}
-		return v, nil
-
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "p":
-			v.paused = !v.paused
-			if !v.paused {
-				return v, v.fetchData()
+// Start begins the periodic refresh loop.
+func (v *Tables) Start(app *tview.Application) {
+	v.done = make(chan struct{})
+	v.ticker = time.NewTicker(5 * time.Second)
+	go func() {
+		v.refresh()
+		app.QueueUpdateDraw(func() { v.render() })
+		for {
+			select {
+			case <-v.ticker.C:
+				v.refresh()
+				app.QueueUpdateDraw(func() { v.render() })
+			case <-v.done:
+				return
 			}
-			return v, nil
 		}
-	}
-
-	var cmd tea.Cmd
-	v.table, cmd = v.table.Update(msg)
-	return v, cmd
+	}()
 }
 
-// View renders the tables table.
-func (v *Tables) View() string {
-	if v.err != nil {
-		return fmt.Sprintf("Error: %v", v.err)
+// Stop stops the periodic refresh loop.
+func (v *Tables) Stop() {
+	if v.ticker != nil {
+		v.ticker.Stop()
 	}
-
-	return v.table.View()
+	if v.done != nil {
+		close(v.done)
+	}
 }
 
-func (v *Tables) updateRows() {
-	var rows []table.Row
-	for _, t := range v.tables {
-		lastVac := timeAgo(t.LastVacuum)
-		if t.LastAutoVacuum != nil && (t.LastVacuum == nil || t.LastAutoVacuum.After(*t.LastVacuum)) {
-			lastVac = timeAgo(t.LastAutoVacuum)
+func (v *Tables) refresh() {
+	ctx := context.Background()
+	data, err := v.db.GetTables(ctx)
+	if err != nil {
+		return
+	}
+	v.mu.Lock()
+	v.data = data
+	v.mu.Unlock()
+}
+
+func (v *Tables) render() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	sel, _ := v.table.GetSelection()
+	v.table.Clear()
+
+	headers := []string{"SCHEMA", "TABLE", "SIZE", "ROWS", "DEAD%", "SEQ/IDX", "LAST VAC"}
+	for col, h := range headers {
+		cell := tview.NewTableCell(h).
+			SetTextColor(theme.ColorTableHeader).
+			SetAttributes(tcell.AttrBold).
+			SetSelectable(false)
+		if col == 1 {
+			cell.SetExpansion(1)
 		}
+		v.table.SetCell(0, col, cell)
+	}
+
+	for i, t := range v.data {
+		row := i + 1
 
 		// Dead tuple percentage
+		var deadPct float64
 		total := t.LiveTuples + t.DeadTuples
-		if total == 0 {
-			total = 1
+		if total > 0 {
+			deadPct = float64(t.DeadTuples) / float64(total) * 100
 		}
-		deadPct := float64(t.DeadTuples) / float64(total) * 100
 		deadStr := fmt.Sprintf("%.1f%%", deadPct)
 
 		// Seq/Idx scan ratio
@@ -145,45 +116,42 @@ func (v *Tables) updateRows() {
 			seqIdx = fmt.Sprintf("%d/%d", t.SeqScan, t.IdxScan)
 		}
 
-		if v.filterValue != "" && !rowContains([]string{t.Schema, t.Name, formatSize(t.TotalSize), fmt.Sprintf("%d", t.LiveTuples), deadStr, seqIdx, lastVac}, v.filterValue) {
-			continue
+		// Last vacuum
+		lastVac := timeAgo(t.LastVacuum)
+		if t.LastAutoVacuum != nil && (t.LastVacuum == nil || t.LastAutoVacuum.After(*t.LastVacuum)) {
+			lastVac = timeAgo(t.LastAutoVacuum)
 		}
-		rows = append(rows, table.NewRow(table.RowData{
-			"schema":    t.Schema,
-			"table":     t.Name,
-			"size":      formatSize(t.TotalSize),
-			"rows":      fmt.Sprintf("%d", t.LiveTuples),
-			"dead":      deadStr,
-			"seqidx":    seqIdx,
-			"lastvac":   lastVac,
-			"_dead_pct": deadPct,
-		}))
-	}
-	v.table = v.table.WithRows(rows).WithRowStyleFunc(func(input table.RowStyleFuncInput) lipgloss.Style {
-		deadPct, _ := input.Row.Data["_dead_pct"].(float64)
-		if deadPct > 10 {
-			return lipgloss.NewStyle().Foreground(theme.ColorRed)
-		}
-		if deadPct > 5 {
-			return lipgloss.NewStyle().Foreground(theme.ColorYellow)
-		}
-		return lipgloss.NewStyle()
-	})
-}
 
-func (v *Tables) fetchData() tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		tables, err := v.db.GetTables(ctx)
-		if err != nil {
-			return tablesDataMsg{err: err}
+		// Row color
+		var rowColor tcell.Color
+		switch {
+		case deadPct > 10:
+			rowColor = theme.ColorRed
+		case deadPct > 5:
+			rowColor = theme.ColorYellow
+		default:
+			rowColor = theme.ColorFg
 		}
-		return tablesDataMsg{tables: tables}
-	}
-}
 
-func (v *Tables) tick() tea.Cmd {
-	return tea.Tick(tablesRefreshInterval, func(time.Time) tea.Msg {
-		return tablesTickMsg{}
-	})
+		values := []string{
+			t.Schema,
+			t.Name,
+			formatSize(t.TotalSize),
+			fmt.Sprintf("%d", t.LiveTuples),
+			deadStr,
+			seqIdx,
+			lastVac,
+		}
+		for col, val := range values {
+			cell := tview.NewTableCell(val).SetTextColor(rowColor)
+			if col == 1 {
+				cell.SetExpansion(1)
+			}
+			v.table.SetCell(row, col, cell)
+		}
+	}
+
+	if sel > 0 && sel < v.table.GetRowCount() {
+		v.table.Select(sel, 0)
+	}
 }

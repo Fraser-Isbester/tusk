@@ -3,164 +3,121 @@ package views
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/evertras/bubble-table/table"
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
 	"github.com/fraser-isbester/tusk/internal/db"
+	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
-
-const connectionsRefreshInterval = 2 * time.Second
-
-// connectionsDataMsg carries fetched connection group data.
-type connectionsDataMsg struct {
-	conns []db.ConnectionGroup
-	err   error
-}
-
-// connectionsTickMsg triggers the next fetch cycle.
-type connectionsTickMsg struct{}
 
 // Connections is the connections view.
 type Connections struct {
-	db          *db.DB
-	table       table.Model
-	width       int
-	height      int
-	paused      bool
-	filterValue string
-	conns       []db.ConnectionGroup
-	err         error
+	table *tview.Table
+	db    *db.DB
+	conns []db.ConnectionGroup
+	mu    sync.Mutex
+	ticker *time.Ticker
+	done   chan struct{}
 }
 
-// NewConnections creates a new Connections view.
-func NewConnections(database *db.DB) *Connections {
-	cols := []table.Column{
-		table.NewFlexColumn("user", "User", 1),
-		table.NewFlexColumn("app", "Application", 2),
-		table.NewColumn("state", "State", 10),
-		table.NewColumn("count", "Count", 8),
+// NewConnectionsView creates a new Connections view.
+func NewConnectionsView(database *db.DB) *Connections {
+	v := &Connections{
+		table: tview.NewTable().
+			SetSelectable(true, false).
+			SetFixed(1, 0).
+			SetSelectedStyle(theme.SelectedStyle),
+		db: database,
 	}
-
-	t := table.New(cols).
-		Focused(true).
-		WithPageSize(20).
-		Border(NoBorder).
-		WithNoPagination().
-		HeaderStyle(HeaderStyle).
-		HighlightStyle(HighlightStyle)
-
-	return &Connections{
-		db:    database,
-		table: t,
-	}
+	v.table.SetBackgroundColor(tcell.ColorDefault)
+	v.table.SetBorder(false)
+	return v
 }
 
-// SetSize updates the terminal dimensions.
-func (v *Connections) SetSize(w, h int) {
-	v.width = w
-	v.height = h
-	v.table = v.table.WithTargetWidth(w).WithPageSize(h - 2)
-}
+// Table returns the underlying tview.Table.
+func (v *Connections) Table() *tview.Table { return v.table }
 
 // ItemCount returns the number of connection groups.
-func (v *Connections) ItemCount() int { return len(v.conns) }
-
-// SelectedUser returns the username from the currently selected row.
-func (v *Connections) SelectedUser() (string, bool) {
-	row := v.table.HighlightedRow()
-	userVal, ok := row.Data["user"]
-	if !ok {
-		return "", false
-	}
-	userStr, ok := userVal.(string)
-	if !ok || userStr == "" {
-		return "", false
-	}
-	return userStr, true
+func (v *Connections) ItemCount() int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return len(v.conns)
 }
 
-// Init starts the first data fetch.
-func (v *Connections) Init() tea.Cmd {
-	return v.fetchData()
-}
-
-// Update handles messages.
-func (v *Connections) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case connectionsDataMsg:
-		if msg.err != nil {
-			v.err = msg.err
-		} else {
-			v.err = nil
-			v.conns = msg.conns
-			v.updateRows()
-		}
-		if !v.paused {
-			return v, v.tick()
-		}
-		return v, nil
-
-	case connectionsTickMsg:
-		if !v.paused {
-			return v, v.fetchData()
-		}
-		return v, nil
-
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "p":
-			v.paused = !v.paused
-			if !v.paused {
-				return v, v.fetchData()
+// Start begins the background refresh loop.
+func (v *Connections) Start(app *tview.Application) {
+	v.done = make(chan struct{})
+	v.ticker = time.NewTicker(2 * time.Second)
+	go func() {
+		v.refresh()
+		app.QueueUpdateDraw(func() { v.render() })
+		for {
+			select {
+			case <-v.ticker.C:
+				v.refresh()
+				app.QueueUpdateDraw(func() { v.render() })
+			case <-v.done:
+				return
 			}
-			return v, nil
 		}
-	}
-
-	var cmd tea.Cmd
-	v.table, cmd = v.table.Update(msg)
-	return v, cmd
+	}()
 }
 
-// View renders the connections table.
-func (v *Connections) View() string {
-	if v.err != nil {
-		return fmt.Sprintf("Error: %v", v.err)
+// Stop stops the background refresh loop.
+func (v *Connections) Stop() {
+	if v.ticker != nil {
+		v.ticker.Stop()
 	}
-
-	return v.table.View()
+	if v.done != nil {
+		close(v.done)
+	}
 }
 
-func (v *Connections) updateRows() {
-	var rows []table.Row
-	for _, c := range v.conns {
-		displayCols := []string{c.User, c.AppName, c.State, fmt.Sprintf("%d", c.Count)}
-		if v.filterValue == "" || rowContains(displayCols, v.filterValue) {
-			rows = append(rows, table.NewRow(table.RowData{
-				"user":  c.User,
-				"app":   c.AppName,
-				"state": c.State,
-				"count": fmt.Sprintf("%d", c.Count),
-			}))
+func (v *Connections) refresh() {
+	ctx := context.Background()
+	conns, err := v.db.GetConnections(ctx)
+	if err != nil {
+		return
+	}
+	v.mu.Lock()
+	v.conns = conns
+	v.mu.Unlock()
+}
+
+func (v *Connections) render() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	selectedRow, _ := v.table.GetSelection()
+
+	v.table.Clear()
+
+	headers := []string{"USER", "APPLICATION", "STATE", "COUNT"}
+	for i, h := range headers {
+		cell := tview.NewTableCell(h).
+			SetTextColor(theme.ColorTableHeader).
+			SetAttributes(tcell.AttrBold).
+			SetSelectable(false)
+		if i == 1 {
+			cell.SetExpansion(1)
 		}
+		v.table.SetCell(0, i, cell)
 	}
-	v.table = v.table.WithRows(rows)
-}
 
-func (v *Connections) fetchData() tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		conns, err := v.db.GetConnections(ctx)
-		if err != nil {
-			return connectionsDataMsg{err: err}
-		}
-		return connectionsDataMsg{conns: conns}
+	for i, c := range v.conns {
+		row := i + 1
+		color := tcell.ColorWhite
+
+		v.table.SetCell(row, 0, tview.NewTableCell(c.User).SetTextColor(color))
+		v.table.SetCell(row, 1, tview.NewTableCell(c.AppName).SetTextColor(color).SetExpansion(1))
+		v.table.SetCell(row, 2, tview.NewTableCell(c.State).SetTextColor(color))
+		v.table.SetCell(row, 3, tview.NewTableCell(fmt.Sprintf("%d", c.Count)).SetTextColor(color))
+		row++
 	}
-}
 
-func (v *Connections) tick() tea.Cmd {
-	return tea.Tick(connectionsRefreshInterval, func(time.Time) tea.Msg {
-		return connectionsTickMsg{}
-	})
+	if selectedRow > 0 && selectedRow < v.table.GetRowCount() {
+		v.table.Select(selectedRow, 0)
+	}
 }

@@ -1,102 +1,28 @@
 package theme
 
 import (
-	"time"
-
-	"github.com/charmbracelet/lipgloss"
+	"github.com/gdamore/tcell/v2"
 )
 
-// k9s-inspired color palette — brighter, more differentiated
+// k9s-inspired color palette using tcell colors.
 var (
-	ColorLogo      = lipgloss.Color("#00D7FF") // cyan
-	ColorHeaderBg  = lipgloss.Color("#5F5FD7") // purple header bg
-	ColorHeaderFg  = lipgloss.Color("#FFFFFF")
-	ColorCrumbsBg  = lipgloss.Color("#303030")
-	ColorCrumbsFg  = lipgloss.Color("#FFFFFF")
-	ColorCrumbsHi  = lipgloss.Color("#00D7FF")
-	ColorStatusBg  = lipgloss.Color("#303030")
-	ColorStatusFg  = lipgloss.Color("#AFAFAF")
-	ColorHintKey   = lipgloss.Color("#00D7FF")
-	ColorHintLabel = lipgloss.Color("#808080")
+	ColorLogo      = tcell.NewRGBColor(0x00, 0xD7, 0xFF) // cyan
+	ColorLabel     = tcell.NewRGBColor(0xD7, 0x87, 0x00) // orange labels
+	ColorValue     = tcell.ColorWhite
+	ColorDim       = tcell.NewRGBColor(0x58, 0x58, 0x58)
+	ColorFg        = tcell.NewRGBColor(0xD0, 0xD0, 0xD0)
+	ColorGreen     = tcell.NewRGBColor(0x00, 0xD7, 0x00)
+	ColorYellow    = tcell.NewRGBColor(0xFF, 0xD7, 0x00)
+	ColorRed       = tcell.NewRGBColor(0xFF, 0x5F, 0x5F)
+	ColorHeaderBg  = tcell.NewRGBColor(0x30, 0x30, 0x30)
+	ColorBorder    = tcell.NewRGBColor(0x44, 0x44, 0x44)
+	ColorSelectedBg = tcell.NewRGBColor(0x00, 0x5F, 0xAF)
+	ColorSelectedFg = tcell.ColorWhite
+	ColorTableHeader = tcell.NewRGBColor(0xD7, 0x87, 0x00) // orange headers
 
-	// Data colors — more distinct like k9s
-	ColorLabel    = lipgloss.Color("#D78700") // orange for labels (like k9s "Context:")
-	ColorValue    = lipgloss.Color("#FFFFFF") // bright white for values
-	ColorGreen    = lipgloss.Color("#00D700") // slightly softer green
-	ColorYellow   = lipgloss.Color("#FFD700") // gold-yellow
-	ColorRed      = lipgloss.Color("#FF5F5F") // softer red
-	ColorDim      = lipgloss.Color("#585858")
-	ColorFg       = lipgloss.Color("#D0D0D0") // default text
-	ColorFgBright = lipgloss.Color("#FFFFFF") // bright white
-
-	// Table
-	ColorTableHeader = lipgloss.Color("#D78700") // orange header like k9s
-	ColorSelectedBg  = lipgloss.Color("#005FAF") // darker blue for selection (like k9s)
-	ColorSelectedFg  = lipgloss.Color("#FFFFFF")
-	ColorBorder      = lipgloss.Color("#444444")
+	// tcell styles
+	SelectedStyle = tcell.StyleDefault.
+		Foreground(ColorSelectedFg).
+		Background(ColorSelectedBg).
+		Attributes(tcell.AttrBold)
 )
-
-var Header = lipgloss.NewStyle().
-	Background(ColorHeaderBg).
-	Foreground(ColorHeaderFg)
-
-var Logo = lipgloss.NewStyle().
-	Background(ColorHeaderBg).
-	Foreground(ColorLogo).
-	Bold(true)
-
-var Crumbs = lipgloss.NewStyle().
-	Background(ColorCrumbsBg).
-	Foreground(ColorCrumbsFg)
-
-var CrumbsHighlight = lipgloss.NewStyle().
-	Background(ColorCrumbsBg).
-	Foreground(ColorCrumbsHi).
-	Bold(true)
-
-var Status = lipgloss.NewStyle().
-	Background(ColorStatusBg).
-	Foreground(ColorStatusFg)
-
-var HintKey = lipgloss.NewStyle().
-	Foreground(ColorHintKey).
-	Bold(true)
-
-var HintLabel = lipgloss.NewStyle().
-	Foreground(ColorHintLabel)
-
-var TableHeader = lipgloss.NewStyle().
-	Foreground(ColorTableHeader).
-	Bold(true)
-
-var TableRow = lipgloss.NewStyle().
-	Foreground(ColorFg)
-
-var TableSelected = lipgloss.NewStyle().
-	Background(ColorSelectedBg).
-	Foreground(ColorSelectedFg).
-	Bold(true)
-
-func DurationStyle(d time.Duration) lipgloss.Style {
-	switch {
-	case d < time.Second:
-		return lipgloss.NewStyle().Foreground(ColorGreen)
-	case d < 5*time.Second:
-		return lipgloss.NewStyle().Foreground(ColorYellow)
-	default:
-		return lipgloss.NewStyle().Foreground(ColorRed)
-	}
-}
-
-func ProfileColor(color string) lipgloss.Color {
-	switch color {
-	case "red":
-		return ColorRed
-	case "yellow":
-		return ColorYellow
-	case "green":
-		return ColorGreen
-	default:
-		return ColorDim
-	}
-}
