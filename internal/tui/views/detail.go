@@ -3,7 +3,9 @@ package views
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fraser-isbester/tusk/internal/db"
@@ -39,9 +41,114 @@ func kvLineColored(label, value, color string) string {
 	return fmt.Sprintf("[#D78700]%-16s[-] [%s]%s[-]\n", label+":", color, value)
 }
 
+// SQL syntax highlighting patterns.
+var (
+	sqlKeywordRe = regexp.MustCompile(`(?i)\b(SELECT|FROM|WHERE|JOIN|ON|AND|OR|INSERT|UPDATE|DELETE|SET|INTO|VALUES|GROUP\s+BY|ORDER\s+BY|LIMIT|BEGIN|COMMIT|ROLLBACK|CREATE|ALTER|DROP|AS|LEFT|RIGHT|INNER|OUTER|HAVING|DISTINCT|UNION|CASE|WHEN|THEN|ELSE|END|NOT|IN|EXISTS|IS|NULL|TRUE|FALSE|LIKE|BETWEEN|WITH|RECURSIVE|RETURNING)\b`)
+	sqlStringRe  = regexp.MustCompile(`'[^']*'`)
+	sqlNumberRe  = regexp.MustCompile(`\b\d+\b`)
+	sqlCommentRe = regexp.MustCompile(`(--[^\n]*|/\*.*?\*/)`)
+)
+
+// highlightSQL adds tview color tags for SQL syntax highlighting.
+func highlightSQL(sql string) string {
+	// Track regions that are already tagged to avoid double-tagging.
+	type region struct{ start, end int }
+	var regions []region
+
+	overlaps := func(s, e int) bool {
+		for _, r := range regions {
+			if s < r.end && e > r.start {
+				return true
+			}
+		}
+		return false
+	}
+
+	// We'll do replacements via an index-based approach.
+	type replacement struct {
+		start, end int
+		text       string
+	}
+	var repls []replacement
+
+	// Comments first (lowest precedence visually but should not be re-tagged).
+	for _, m := range sqlCommentRe.FindAllStringIndex(sql, -1) {
+		if !overlaps(m[0], m[1]) {
+			regions = append(regions, region{m[0], m[1]})
+			repls = append(repls, replacement{m[0], m[1], "[#585858]" + sql[m[0]:m[1]] + "[-]"})
+		}
+	}
+
+	// String literals.
+	for _, m := range sqlStringRe.FindAllStringIndex(sql, -1) {
+		if !overlaps(m[0], m[1]) {
+			regions = append(regions, region{m[0], m[1]})
+			repls = append(repls, replacement{m[0], m[1], "[#00D700]" + sql[m[0]:m[1]] + "[-]"})
+		}
+	}
+
+	// Keywords.
+	for _, m := range sqlKeywordRe.FindAllStringIndex(sql, -1) {
+		if !overlaps(m[0], m[1]) {
+			regions = append(regions, region{m[0], m[1]})
+			repls = append(repls, replacement{m[0], m[1], "[#5F87FF]" + sql[m[0]:m[1]] + "[-]"})
+		}
+	}
+
+	// Numbers.
+	for _, m := range sqlNumberRe.FindAllStringIndex(sql, -1) {
+		if !overlaps(m[0], m[1]) {
+			regions = append(regions, region{m[0], m[1]})
+			repls = append(repls, replacement{m[0], m[1], "[#FFD700]" + sql[m[0]:m[1]] + "[-]"})
+		}
+	}
+
+	// Apply replacements from end to start to preserve indices.
+	// Sort by start descending.
+	for i := 0; i < len(repls); i++ {
+		for j := i + 1; j < len(repls); j++ {
+			if repls[j].start > repls[i].start {
+				repls[i], repls[j] = repls[j], repls[i]
+			}
+		}
+	}
+
+	result := sql
+	for _, r := range repls {
+		result = result[:r.start] + r.text + result[r.end:]
+	}
+	return result
+}
+
+// mergeComments parses sqlcommentor tags from all statements in a query,
+// merging with last-write-wins semantics.
+func mergeComments(query string) db.SQLComment {
+	var merged db.SQLComment
+	for _, stmt := range strings.Split(query, ";") {
+		c := db.ParseSQLComment(strings.TrimSpace(stmt))
+		if c.App != "" {
+			merged.App = c.App
+		}
+		if c.Route != "" {
+			merged.Route = c.Route
+		}
+		if c.Controller != "" {
+			merged.Controller = c.Controller
+		}
+		if c.Action != "" {
+			merged.Action = c.Action
+		}
+		if c.Framework != "" {
+			merged.Framework = c.Framework
+		}
+	}
+	return merged
+}
+
 // NewQueryDetailView creates a detail view for an active query.
 // If history is non-nil, shows the query history for this PID.
-func NewQueryDetailView(q db.ActiveQuery, dbConn *db.DB, history *db.QueryHistory) *tview.TextView {
+// The view live-refreshes every 2s by re-fetching the query from the DB.
+func NewQueryDetailView(q db.ActiveQuery, dbConn *db.DB, history *db.QueryHistory, app *tview.Application) *tview.TextView {
 	tv := tview.NewTextView().
 		SetDynamicColors(true).
 		SetScrollable(true).
@@ -49,20 +156,78 @@ func NewQueryDetailView(q db.ActiveQuery, dbConn *db.DB, history *db.QueryHistor
 	tv.SetBackgroundColor(tcell.ColorDefault)
 	tv.SetBorder(false)
 
-	renderQueryDetail(tv, q, history)
+	var statusMsg string
+
+	renderWithStatus := func(query db.ActiveQuery) {
+		renderQueryDetail(tv, query, history, statusMsg)
+	}
+
+	renderWithStatus(q)
+
+	pid := q.PID
+	done := make(chan struct{})
+	var closeOnce sync.Once
+	stopRefresh := func() { closeOnce.Do(func() { close(done) }) }
+
+	// Live refresh goroutine.
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				ctx := context.Background()
+				queries, err := dbConn.GetActiveQueries(ctx)
+				if err != nil {
+					continue
+				}
+				for _, updated := range queries {
+					if updated.PID == pid {
+						app.QueueUpdateDraw(func() {
+							renderWithStatus(updated)
+						})
+						break
+					}
+				}
+			case <-done:
+				return
+			}
+		}
+	}()
 
 	tv.SetInputCapture(func(evt *tcell.EventKey) *tcell.EventKey {
 		switch evt.Rune() {
 		case 'c':
 			go func() {
-				dbConn.CancelQuery(context.Background(), q.PID)
+				err := dbConn.CancelQuery(context.Background(), pid)
+				app.QueueUpdateDraw(func() {
+					if err != nil {
+						statusMsg = fmt.Sprintf("[#FF5F5F]Error cancelling PID %d: %s[-]", pid, err.Error())
+					} else {
+						statusMsg = fmt.Sprintf("[#00D700]Cancelled PID %d[-]", pid)
+					}
+					renderWithStatus(q)
+				})
 			}()
 			return nil
 		case 't':
 			go func() {
-				dbConn.TerminateBackend(context.Background(), q.PID)
+				err := dbConn.TerminateBackend(context.Background(), pid)
+				app.QueueUpdateDraw(func() {
+					if err != nil {
+						statusMsg = fmt.Sprintf("[#FF5F5F]Error terminating PID %d: %s[-]", pid, err.Error())
+					} else {
+						statusMsg = fmt.Sprintf("[#00D700]Terminated PID %d[-]", pid)
+					}
+					renderWithStatus(q)
+				})
 			}()
 			return nil
+		case 'q':
+			stopRefresh()
+		}
+		if evt.Key() == tcell.KeyEscape {
+			stopRefresh()
 		}
 		return evt
 	})
@@ -70,13 +235,20 @@ func NewQueryDetailView(q db.ActiveQuery, dbConn *db.DB, history *db.QueryHistor
 	return tv
 }
 
-func renderQueryDetail(tv *tview.TextView, q db.ActiveQuery, history *db.QueryHistory) {
+func renderQueryDetail(tv *tview.TextView, q db.ActiveQuery, history *db.QueryHistory, statusMsg string) {
 	var b strings.Builder
 	b.WriteString("\n")
+
+	if statusMsg != "" {
+		b.WriteString(statusMsg + "\n\n")
+	}
+
 	b.WriteString(kvLine("PID", fmt.Sprintf("%d", q.PID)))
 	b.WriteString(kvLine("User", q.User))
 	b.WriteString(kvLine("Application", q.AppName))
-	b.WriteString(kvLine("Client", q.ClientAddr))
+	if q.ClientAddr != "" {
+		b.WriteString(kvLine("Client", q.ClientAddr))
+	}
 	b.WriteString(kvLine("State", q.State))
 
 	if q.WaitEventType != "" || q.WaitEvent != "" {
@@ -89,20 +261,51 @@ func renderQueryDetail(tv *tview.TextView, q db.ActiveQuery, history *db.QueryHi
 
 	b.WriteString(kvLineColored("Duration", formatDuration(q.Duration), durationColor(q.Duration)))
 
-	// SQLcommentor section
-	if q.Comment.App != "" {
-		b.WriteString(separator("SQLcommentor"))
-		b.WriteString(kvLine("App", q.Comment.App))
-		if q.Comment.Route != "" {
-			b.WriteString(kvLine("Route", q.Comment.Route))
-		}
+	// SQLcommentor tags — parse from query text, merge across statements.
+	comment := mergeComments(q.Query)
+	// Also merge with pre-parsed comment on the ActiveQuery.
+	if q.Comment.App != "" && comment.App == "" {
+		comment.App = q.Comment.App
+	}
+	if q.Comment.Route != "" && comment.Route == "" {
+		comment.Route = q.Comment.Route
+	}
+	if q.Comment.Controller != "" && comment.Controller == "" {
+		comment.Controller = q.Comment.Controller
+	}
+	if q.Comment.Action != "" && comment.Action == "" {
+		comment.Action = q.Comment.Action
+	}
+	if q.Comment.Framework != "" && comment.Framework == "" {
+		comment.Framework = q.Comment.Framework
 	}
 
-	// Current query
-	b.WriteString(separator("Query"))
-	b.WriteString(fmt.Sprintf("[#00D7FF]%s[-]\n", q.Query))
+	if comment.App != "" || comment.Route != "" || comment.Controller != "" || comment.Action != "" || comment.Framework != "" {
+		b.WriteString(separator("Tags"))
+		var tags []string
+		if comment.App != "" {
+			tags = append(tags, fmt.Sprintf("[#00D7FF]app=[white]%s[-]", comment.App))
+		}
+		if comment.Route != "" {
+			tags = append(tags, fmt.Sprintf("[#00D7FF]route=[white]%s[-]", comment.Route))
+		}
+		if comment.Controller != "" {
+			tags = append(tags, fmt.Sprintf("[#00D7FF]controller=[white]%s[-]", comment.Controller))
+		}
+		if comment.Action != "" {
+			tags = append(tags, fmt.Sprintf("[#00D7FF]action=[white]%s[-]", comment.Action))
+		}
+		if comment.Framework != "" {
+			tags = append(tags, fmt.Sprintf("[#00D7FF]framework=[white]%s[-]", comment.Framework))
+		}
+		b.WriteString(strings.Join(tags, "  ") + "\n")
+	}
 
-	// Query history for this PID
+	// Current query with syntax highlighting.
+	b.WriteString(separator("Query"))
+	b.WriteString(highlightSQL(q.Query) + "\n")
+
+	// Query history for this PID.
 	if history != nil {
 		entries := history.Get(q.PID)
 		if len(entries) > 1 {
@@ -113,13 +316,13 @@ func renderQueryDetail(tv *tview.TextView, q db.ActiveQuery, history *db.QueryHi
 				if i == len(entries)-1 {
 					prefix = "→ " // current query
 				}
-				// Truncate long queries for the history list
+				// Truncate long queries for the history list.
 				queryPreview := e.Query
 				if len(queryPreview) > 120 {
 					queryPreview = queryPreview[:117] + "..."
 				}
 				b.WriteString(fmt.Sprintf("[#808080]%s%s[-] [#585858]%s[-] %s\n",
-					prefix, ts, e.State, queryPreview))
+					prefix, ts, e.State, highlightSQL(queryPreview)))
 			}
 		}
 	}
