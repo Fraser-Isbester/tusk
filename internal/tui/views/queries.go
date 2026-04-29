@@ -150,6 +150,10 @@ func (v *Queries) render() {
 		if q.User == "(system)" {
 			continue
 		}
+		// Only show actively running queries.
+		if q.State != "active" {
+			continue
+		}
 		if v.userFilter != "" && q.User != v.userFilter {
 			continue
 		}
@@ -161,7 +165,7 @@ func (v *Queries) render() {
 			wait += ":" + q.WaitEvent
 		}
 		durStr := ""
-		if q.Duration > 0 {
+		if q.Duration > 0 && q.State == "active" {
 			durStr = formatDuration(q.Duration)
 		}
 
@@ -180,9 +184,8 @@ func (v *Queries) render() {
 		}
 
 		color := tcell.ColorWhite
-		isIdleTxn := q.State == "idle in transaction" || q.State == "idle in transaction (aborted)"
 		isLongDur := q.Duration >= 30*time.Second
-		if isIdleTxn || isLongDur {
+		if isLongDur {
 			color = theme.ColorRed
 		} else if q.Duration >= 1*time.Second {
 			color = theme.ColorYellow
@@ -192,11 +195,7 @@ func (v *Queries) render() {
 		v.table.SetCell(row, 1, tview.NewTableCell(q.User).SetTextColor(color))
 		v.table.SetCell(row, 2, tview.NewTableCell(q.AppName).SetTextColor(color).SetExpansion(1))
 
-		stateCell := tview.NewTableCell(q.State).SetTextColor(color)
-		if isIdleTxn {
-			stateCell.SetAttributes(tcell.AttrBlink)
-		}
-		v.table.SetCell(row, 3, stateCell)
+		v.table.SetCell(row, 3, tview.NewTableCell(q.State).SetTextColor(color))
 
 		v.table.SetCell(row, 4, tview.NewTableCell(wait).SetTextColor(color).SetExpansion(1))
 
