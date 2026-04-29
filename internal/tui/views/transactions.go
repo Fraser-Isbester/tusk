@@ -14,13 +14,19 @@ import (
 
 // Transactions is the transaction monitor view.
 type Transactions struct {
-	table       *tview.Table
-	db          *db.DB
-	data        []db.Transaction
-	visibleData []db.Transaction
-	mu          sync.Mutex
-	ticker      *time.Ticker
-	done        chan struct{}
+	table        *tview.Table
+	db           *db.DB
+	data         []db.Transaction
+	visibleData  []db.Transaction
+	queryHistory *db.QueryHistory
+	mu           sync.Mutex
+	ticker       *time.Ticker
+	done         chan struct{}
+}
+
+// SetQueryHistory sets the shared query history tracker.
+func (v *Transactions) SetQueryHistory(h *db.QueryHistory) {
+	v.queryHistory = h
 }
 
 // NewTransactionsView creates a new Transactions view.
@@ -81,6 +87,9 @@ func (v *Transactions) refresh() {
 	data, err := v.db.GetTransactions(ctx)
 	if err != nil {
 		return
+	}
+	if v.queryHistory != nil {
+		v.queryHistory.RecordTransactions(data)
 	}
 	v.mu.Lock()
 	v.data = data

@@ -40,7 +40,8 @@ func kvLineColored(label, value, color string) string {
 }
 
 // NewQueryDetailView creates a detail view for an active query.
-func NewQueryDetailView(q db.ActiveQuery, dbConn *db.DB) *tview.TextView {
+// If history is non-nil, shows the query history for this PID.
+func NewQueryDetailView(q db.ActiveQuery, dbConn *db.DB, history *db.QueryHistory) *tview.TextView {
 	tv := tview.NewTextView().
 		SetDynamicColors(true).
 		SetScrollable(true).
@@ -48,7 +49,7 @@ func NewQueryDetailView(q db.ActiveQuery, dbConn *db.DB) *tview.TextView {
 	tv.SetBackgroundColor(tcell.ColorDefault)
 	tv.SetBorder(false)
 
-	renderQueryDetail(tv, q)
+	renderQueryDetail(tv, q, history)
 
 	tv.SetInputCapture(func(evt *tcell.EventKey) *tcell.EventKey {
 		switch evt.Rune() {
@@ -69,7 +70,7 @@ func NewQueryDetailView(q db.ActiveQuery, dbConn *db.DB) *tview.TextView {
 	return tv
 }
 
-func renderQueryDetail(tv *tview.TextView, q db.ActiveQuery) {
+func renderQueryDetail(tv *tview.TextView, q db.ActiveQuery, history *db.QueryHistory) {
 	var b strings.Builder
 	b.WriteString("\n")
 	b.WriteString(kvLine("PID", fmt.Sprintf("%d", q.PID)))
@@ -97,9 +98,31 @@ func renderQueryDetail(tv *tview.TextView, q db.ActiveQuery) {
 		}
 	}
 
-	// Query section
+	// Current query
 	b.WriteString(separator("Query"))
 	b.WriteString(fmt.Sprintf("[#00D7FF]%s[-]\n", q.Query))
+
+	// Query history for this PID
+	if history != nil {
+		entries := history.Get(q.PID)
+		if len(entries) > 1 {
+			b.WriteString(separator(fmt.Sprintf("Transaction History (%d queries)", len(entries))))
+			for i, e := range entries {
+				ts := e.Timestamp.Format("15:04:05")
+				prefix := "  "
+				if i == len(entries)-1 {
+					prefix = "→ " // current query
+				}
+				// Truncate long queries for the history list
+				queryPreview := e.Query
+				if len(queryPreview) > 120 {
+					queryPreview = queryPreview[:117] + "..."
+				}
+				b.WriteString(fmt.Sprintf("[#808080]%s%s[-] [#585858]%s[-] %s\n",
+					prefix, ts, e.State, queryPreview))
+			}
+		}
+	}
 
 	// Footer
 	b.WriteString("\n[#808080][c] cancel  [t] terminate  [Esc] back[-]\n")

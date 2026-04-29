@@ -14,14 +14,15 @@ import (
 
 // Queries is the active queries view.
 type Queries struct {
-	table       *tview.Table
-	db          *db.DB
-	queries     []db.ActiveQuery
-	visibleData []db.ActiveQuery
-	userFilter  string
-	mu          sync.Mutex
-	ticker      *time.Ticker
-	done        chan struct{}
+	table        *tview.Table
+	db           *db.DB
+	queries      []db.ActiveQuery
+	visibleData  []db.ActiveQuery
+	userFilter   string
+	queryHistory *db.QueryHistory
+	mu           sync.Mutex
+	ticker       *time.Ticker
+	done         chan struct{}
 }
 
 // NewQueriesView creates a new Queries view.
@@ -112,6 +113,9 @@ func (v *Queries) refresh() {
 	queries, err := v.db.GetActiveQueries(ctx)
 	if err != nil {
 		return
+	}
+	if v.queryHistory != nil {
+		v.queryHistory.RecordAll(queries)
 	}
 	v.mu.Lock()
 	v.queries = queries
@@ -210,6 +214,11 @@ func (v *Queries) SetUserFilter(user string) {
 	v.mu.Lock()
 	v.userFilter = user
 	v.mu.Unlock()
+}
+
+// SetQueryHistory sets the shared query history tracker.
+func (v *Queries) SetQueryHistory(h *db.QueryHistory) {
+	v.queryHistory = h
 }
 
 func (v *Queries) pidAtRow(row int) int {
