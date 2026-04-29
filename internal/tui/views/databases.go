@@ -2,150 +2,119 @@ package views
 
 import (
 	"context"
-	"fmt"
+	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/evertras/bubble-table/table"
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
 	"github.com/fraser-isbester/tusk/internal/db"
+	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
-
-const databasesRefreshInterval = 5 * time.Second
-
-// databasesDataMsg carries fetched database data.
-type databasesDataMsg struct {
-	databases []db.DatabaseInfo
-	err       error
-}
-
-// databasesTickMsg triggers the next fetch cycle.
-type databasesTickMsg struct{}
 
 // Databases is the databases view.
 type Databases struct {
-	db          *db.DB
-	table       table.Model
-	width       int
-	height      int
-	paused      bool
-	filterValue string
-	databases   []db.DatabaseInfo
-	err         error
+	table     *tview.Table
+	db        *db.DB
+	databases []db.DatabaseInfo
+	mu        sync.Mutex
+	ticker    *time.Ticker
+	done      chan struct{}
 }
 
-// NewDatabases creates a new Databases view.
-func NewDatabases(database *db.DB) *Databases {
-	cols := []table.Column{
-		table.NewFlexColumn("name", "Name", 1),
-		table.NewColumn("size", "Size", 10),
-		table.NewColumn("owner", "Owner", 12),
+// NewDatabasesView creates a new Databases view.
+func NewDatabasesView(database *db.DB) *Databases {
+	v := &Databases{
+		table: tview.NewTable().
+			SetSelectable(true, false).
+			SetFixed(1, 0).
+			SetSelectedStyle(theme.SelectedStyle),
+		db: database,
 	}
-
-	t := table.New(cols).
-		Focused(true).
-		WithPageSize(20).
-		Border(NoBorder).
-		WithNoPagination().
-		HeaderStyle(HeaderStyle).
-		HighlightStyle(HighlightStyle)
-
-	return &Databases{
-		db:    database,
-		table: t,
-	}
+	v.table.SetBackgroundColor(tcell.ColorDefault)
+	v.table.SetBorder(false)
+	return v
 }
 
-// SetSize updates the terminal dimensions.
-func (v *Databases) SetSize(w, h int) {
-	v.width = w
-	v.height = h
-	v.table = v.table.WithTargetWidth(w).WithPageSize(h - 2)
-}
+// Table returns the underlying tview.Table.
+func (v *Databases) Table() *tview.Table { return v.table }
 
 // ItemCount returns the number of databases.
-func (v *Databases) ItemCount() int { return len(v.databases) }
-
-// Init starts the first data fetch.
-func (v *Databases) Init() tea.Cmd {
-	return v.fetchData()
+func (v *Databases) ItemCount() int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return len(v.databases)
 }
 
-// Update handles messages.
-func (v *Databases) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case databasesDataMsg:
-		if msg.err != nil {
-			v.err = msg.err
-		} else {
-			v.err = nil
-			v.databases = msg.databases
-			v.updateRows()
-		}
-		if !v.paused {
-			return v, v.tick()
-		}
-		return v, nil
-
-	case databasesTickMsg:
-		if !v.paused {
-			return v, v.fetchData()
-		}
-		return v, nil
-
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "p":
-			v.paused = !v.paused
-			if !v.paused {
-				return v, v.fetchData()
+// Start begins the background refresh loop.
+func (v *Databases) Start(app *tview.Application) {
+	v.done = make(chan struct{})
+	v.ticker = time.NewTicker(5 * time.Second)
+	go func() {
+		v.refresh()
+		app.QueueUpdateDraw(func() { v.render() })
+		for {
+			select {
+			case <-v.ticker.C:
+				v.refresh()
+				app.QueueUpdateDraw(func() { v.render() })
+			case <-v.done:
+				return
 			}
-			return v, nil
 		}
-	}
-
-	var cmd tea.Cmd
-	v.table, cmd = v.table.Update(msg)
-	return v, cmd
+	}()
 }
 
-// View renders the databases table.
-func (v *Databases) View() string {
-	if v.err != nil {
-		return fmt.Sprintf("Error: %v", v.err)
+// Stop stops the background refresh loop.
+func (v *Databases) Stop() {
+	if v.ticker != nil {
+		v.ticker.Stop()
 	}
-
-	return v.table.View()
+	if v.done != nil {
+		close(v.done)
+	}
 }
 
-func (v *Databases) updateRows() {
-	var rows []table.Row
-	for _, d := range v.databases {
-		sizeStr := formatSize(d.Size)
-		displayCols := []string{d.Name, sizeStr, d.Owner}
-		if v.filterValue == "" || rowContains(displayCols, v.filterValue) {
-			rows = append(rows, table.NewRow(table.RowData{
-				"name":  d.Name,
-				"size":  sizeStr,
-				"owner": d.Owner,
-			}))
+func (v *Databases) refresh() {
+	ctx := context.Background()
+	databases, err := v.db.GetDatabases(ctx)
+	if err != nil {
+		return
+	}
+	v.mu.Lock()
+	v.databases = databases
+	v.mu.Unlock()
+}
+
+func (v *Databases) render() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	selectedRow, _ := v.table.GetSelection()
+
+	v.table.Clear()
+
+	headers := []string{"NAME", "SIZE", "OWNER"}
+	for i, h := range headers {
+		cell := tview.NewTableCell(h).
+			SetTextColor(theme.ColorTableHeader).
+			SetAttributes(tcell.AttrBold).
+			SetSelectable(false)
+		if i == 0 {
+			cell.SetExpansion(1)
 		}
+		v.table.SetCell(0, i, cell)
 	}
-	v.table = v.table.WithRows(rows)
-}
 
-func (v *Databases) fetchData() tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		databases, err := v.db.GetDatabases(ctx)
-		if err != nil {
-			return databasesDataMsg{err: err}
-		}
-		return databasesDataMsg{databases: databases}
+	for i, d := range v.databases {
+		row := i + 1
+		color := tcell.ColorWhite
+
+		v.table.SetCell(row, 0, tview.NewTableCell(d.Name).SetTextColor(color).SetExpansion(1))
+		v.table.SetCell(row, 1, tview.NewTableCell(formatSize(d.Size)).SetTextColor(color))
+		v.table.SetCell(row, 2, tview.NewTableCell(d.Owner).SetTextColor(color))
 	}
-}
 
-func (v *Databases) tick() tea.Cmd {
-	return tea.Tick(databasesRefreshInterval, func(time.Time) tea.Msg {
-		return databasesTickMsg{}
-	})
+	if selectedRow > 0 && selectedRow < v.table.GetRowCount() {
+		v.table.Select(selectedRow, 0)
+	}
 }

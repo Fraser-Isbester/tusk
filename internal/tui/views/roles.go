@@ -3,159 +3,127 @@ package views
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/evertras/bubble-table/table"
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
 	"github.com/fraser-isbester/tusk/internal/db"
+	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
-
-const rolesRefreshInterval = 10 * time.Second
-
-// rolesDataMsg carries fetched role data.
-type rolesDataMsg struct {
-	roles []db.RoleInfo
-	err   error
-}
-
-// rolesTickMsg triggers the next fetch cycle.
-type rolesTickMsg struct{}
 
 // Roles is the roles view.
 type Roles struct {
-	db          *db.DB
-	table       table.Model
-	width       int
-	height      int
-	paused      bool
-	filterValue string
-	roles       []db.RoleInfo
-	err         error
+	table  *tview.Table
+	db     *db.DB
+	roles  []db.RoleInfo
+	mu     sync.Mutex
+	ticker *time.Ticker
+	done   chan struct{}
 }
 
-// NewRoles creates a new Roles view.
-func NewRoles(database *db.DB) *Roles {
-	cols := []table.Column{
-		table.NewFlexColumn("name", "Name", 1),
-		table.NewColumn("superuser", "Superuser", 10),
-		table.NewColumn("createrole", "Create Role", 12),
-		table.NewColumn("createdb", "Create DB", 10),
-		table.NewColumn("login", "Login", 8),
-		table.NewColumn("connlimit", "Conn Limit", 11),
+// NewRolesView creates a new Roles view.
+func NewRolesView(database *db.DB) *Roles {
+	v := &Roles{
+		table: tview.NewTable().
+			SetSelectable(true, false).
+			SetFixed(1, 0).
+			SetSelectedStyle(theme.SelectedStyle),
+		db: database,
 	}
-
-	t := table.New(cols).
-		Focused(true).
-		WithPageSize(20).
-		Border(NoBorder).
-		WithNoPagination().
-		HeaderStyle(HeaderStyle).
-		HighlightStyle(HighlightStyle)
-
-	return &Roles{
-		db:    database,
-		table: t,
-	}
+	v.table.SetBackgroundColor(tcell.ColorDefault)
+	v.table.SetBorder(false)
+	return v
 }
 
-// SetSize updates the terminal dimensions.
-func (v *Roles) SetSize(w, h int) {
-	v.width = w
-	v.height = h
-	v.table = v.table.WithTargetWidth(w).WithPageSize(h - 2)
-}
+// Table returns the underlying tview.Table.
+func (v *Roles) Table() *tview.Table { return v.table }
 
 // ItemCount returns the number of roles.
-func (v *Roles) ItemCount() int { return len(v.roles) }
-
-// Init starts the first data fetch.
-func (v *Roles) Init() tea.Cmd {
-	return v.fetchData()
+func (v *Roles) ItemCount() int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return len(v.roles)
 }
 
-// Update handles messages.
-func (v *Roles) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case rolesDataMsg:
-		if msg.err != nil {
-			v.err = msg.err
-		} else {
-			v.err = nil
-			v.roles = msg.roles
-			v.updateRows()
-		}
-		if !v.paused {
-			return v, v.tick()
-		}
-		return v, nil
-
-	case rolesTickMsg:
-		if !v.paused {
-			return v, v.fetchData()
-		}
-		return v, nil
-
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "p":
-			v.paused = !v.paused
-			if !v.paused {
-				return v, v.fetchData()
+// Start begins the background refresh loop.
+func (v *Roles) Start(app *tview.Application) {
+	v.done = make(chan struct{})
+	v.ticker = time.NewTicker(10 * time.Second)
+	go func() {
+		v.refresh()
+		app.QueueUpdateDraw(func() { v.render() })
+		for {
+			select {
+			case <-v.ticker.C:
+				v.refresh()
+				app.QueueUpdateDraw(func() { v.render() })
+			case <-v.done:
+				return
 			}
-			return v, nil
 		}
-	}
-
-	var cmd tea.Cmd
-	v.table, cmd = v.table.Update(msg)
-	return v, cmd
+	}()
 }
 
-// View renders the roles table.
-func (v *Roles) View() string {
-	if v.err != nil {
-		return fmt.Sprintf("Error: %v", v.err)
+// Stop stops the background refresh loop.
+func (v *Roles) Stop() {
+	if v.ticker != nil {
+		v.ticker.Stop()
 	}
-
-	return v.table.View()
+	if v.done != nil {
+		close(v.done)
+	}
 }
 
-func (v *Roles) updateRows() {
-	var rows []table.Row
-	for _, r := range v.roles {
+func (v *Roles) refresh() {
+	ctx := context.Background()
+	roles, err := v.db.GetRoles(ctx)
+	if err != nil {
+		return
+	}
+	v.mu.Lock()
+	v.roles = roles
+	v.mu.Unlock()
+}
+
+func (v *Roles) render() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	selectedRow, _ := v.table.GetSelection()
+
+	v.table.Clear()
+
+	headers := []string{"NAME", "SUPERUSER", "CREATE ROLE", "CREATE DB", "LOGIN", "CONN LIMIT"}
+	for i, h := range headers {
+		cell := tview.NewTableCell(h).
+			SetTextColor(theme.ColorTableHeader).
+			SetAttributes(tcell.AttrBold).
+			SetSelectable(false)
+		if i == 0 {
+			cell.SetExpansion(1)
+		}
+		v.table.SetCell(0, i, cell)
+	}
+
+	for i, r := range v.roles {
+		row := i + 1
+		color := tcell.ColorWhite
+
 		connLimit := fmt.Sprintf("%d", r.ConnLimit)
 		if r.ConnLimit == -1 {
 			connLimit = "unlimited"
 		}
 
-		displayCols := []string{r.Name, boolIcon(r.IsSuperuser), boolIcon(r.CanCreateRole), boolIcon(r.CanCreateDB), boolIcon(r.CanLogin), connLimit}
-		if v.filterValue == "" || rowContains(displayCols, v.filterValue) {
-			rows = append(rows, table.NewRow(table.RowData{
-				"name":       r.Name,
-				"superuser":  boolIcon(r.IsSuperuser),
-				"createrole": boolIcon(r.CanCreateRole),
-				"createdb":   boolIcon(r.CanCreateDB),
-				"login":      boolIcon(r.CanLogin),
-				"connlimit":  connLimit,
-			}))
-		}
+		v.table.SetCell(row, 0, tview.NewTableCell(r.Name).SetTextColor(color).SetExpansion(1))
+		v.table.SetCell(row, 1, tview.NewTableCell(boolIcon(r.IsSuperuser)).SetTextColor(color))
+		v.table.SetCell(row, 2, tview.NewTableCell(boolIcon(r.CanCreateRole)).SetTextColor(color))
+		v.table.SetCell(row, 3, tview.NewTableCell(boolIcon(r.CanCreateDB)).SetTextColor(color))
+		v.table.SetCell(row, 4, tview.NewTableCell(boolIcon(r.CanLogin)).SetTextColor(color))
+		v.table.SetCell(row, 5, tview.NewTableCell(connLimit).SetTextColor(color))
 	}
-	v.table = v.table.WithRows(rows)
-}
 
-func (v *Roles) fetchData() tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		roles, err := v.db.GetRoles(ctx)
-		if err != nil {
-			return rolesDataMsg{err: err}
-		}
-		return rolesDataMsg{roles: roles}
+	if selectedRow > 0 && selectedRow < v.table.GetRowCount() {
+		v.table.Select(selectedRow, 0)
 	}
-}
-
-func (v *Roles) tick() tea.Cmd {
-	return tea.Tick(rolesRefreshInterval, func(time.Time) tea.Msg {
-		return rolesTickMsg{}
-	})
 }

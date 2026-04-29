@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
 	"github.com/fraser-isbester/tusk/internal/config"
@@ -32,7 +31,6 @@ func main() {
 			var readonly bool
 
 			if len(args) > 0 {
-				// Direct connection string from CLI argument.
 				connStr = args[0]
 				profileName = "cli"
 			} else {
@@ -56,9 +54,7 @@ func main() {
 			defer database.Close()
 
 			app := tui.NewApp(database, profileName, profileColor, readonly)
-			p := tea.NewProgram(app, tea.WithAltScreen())
-
-			if _, err := p.Run(); err != nil {
+			if err := app.Run(); err != nil {
 				return fmt.Errorf("running tusk: %w", err)
 			}
 			return nil

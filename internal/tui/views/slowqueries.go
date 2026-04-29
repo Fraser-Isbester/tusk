@@ -3,151 +3,139 @@ package views
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/evertras/bubble-table/table"
 	"github.com/fraser-isbester/tusk/internal/db"
+	"github.com/fraser-isbester/tusk/internal/tui/theme"
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
 )
-
-const slowQueriesRefreshInterval = 10 * time.Second
-
-// slowQueriesDataMsg carries fetched slow query data.
-type slowQueriesDataMsg struct {
-	queries []db.SlowQuery
-	err     error
-}
-
-// slowQueriesTickMsg triggers the next fetch cycle.
-type slowQueriesTickMsg struct{}
 
 // SlowQueries is the slow queries view.
 type SlowQueries struct {
+	table  *tview.Table
 	db     *db.DB
-	table  table.Model
-	width  int
-	height int
-	paused bool
 	data   []db.SlowQuery
-	err    error
+	mu     sync.Mutex
+	ticker *time.Ticker
+	done   chan struct{}
 }
 
-// NewSlowQueries creates a new SlowQueries view.
-func NewSlowQueries(database *db.DB) *SlowQueries {
-	cols := []table.Column{
-		table.NewFlexColumn("query", "QUERY", 1),
-		table.NewColumn("calls", "CALLS", 8),
-		table.NewColumn("total", "TOTAL", 10),
-		table.NewColumn("mean", "MEAN", 10),
-		table.NewColumn("rowscall", "ROWS/CALL", 10),
-		table.NewColumn("hit", "HIT%", 6),
-	}
-	t := table.New(cols).
-		Focused(true).
-		WithPageSize(20).
-		Border(NoBorder).
-		WithNoPagination().
-		HeaderStyle(HeaderStyle).
-		HighlightStyle(HighlightStyle)
-	return &SlowQueries{
+// NewSlowQueriesView creates a new SlowQueries view.
+func NewSlowQueriesView(database *db.DB) *SlowQueries {
+	v := &SlowQueries{
+		table: tview.NewTable().SetSelectable(true, false).SetFixed(1, 0).SetSelectedStyle(theme.SelectedStyle),
 		db:    database,
-		table: t,
 	}
+	v.table.SetBackgroundColor(tcell.ColorDefault)
+	v.table.SetBorder(false)
+	return v
 }
 
-// SetSize updates the terminal dimensions.
-func (v *SlowQueries) SetSize(w, h int) {
-	v.width = w
-	v.height = h
-	v.table = v.table.WithTargetWidth(w).WithPageSize(h - 2)
-}
+// Table returns the underlying tview.Table.
+func (v *SlowQueries) Table() *tview.Table { return v.table }
 
 // ItemCount returns the number of slow queries.
-func (v *SlowQueries) ItemCount() int { return len(v.data) }
+func (v *SlowQueries) ItemCount() int { v.mu.Lock(); defer v.mu.Unlock(); return len(v.data) }
 
-// Init starts the first data fetch.
-func (v *SlowQueries) Init() tea.Cmd {
-	return v.fetchData()
-}
-
-// Update handles messages.
-func (v *SlowQueries) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case slowQueriesDataMsg:
-		if msg.err != nil {
-			v.err = msg.err
-		} else {
-			v.err = nil
-			v.data = msg.queries
-			v.updateRows()
-		}
-		if !v.paused {
-			return v, v.tick()
-		}
-		return v, nil
-
-	case slowQueriesTickMsg:
-		if !v.paused {
-			return v, v.fetchData()
-		}
-		return v, nil
-
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "p":
-			v.paused = !v.paused
-			if !v.paused {
-				return v, v.fetchData()
+// Start begins the periodic refresh loop.
+func (v *SlowQueries) Start(app *tview.Application) {
+	v.done = make(chan struct{})
+	v.ticker = time.NewTicker(10 * time.Second)
+	go func() {
+		v.refresh()
+		app.QueueUpdateDraw(func() { v.render() })
+		for {
+			select {
+			case <-v.ticker.C:
+				v.refresh()
+				app.QueueUpdateDraw(func() { v.render() })
+			case <-v.done:
+				return
 			}
-			return v, nil
 		}
-	}
-
-	var cmd tea.Cmd
-	v.table, cmd = v.table.Update(msg)
-	return v, cmd
+	}()
 }
 
-// View renders the slow queries table.
-func (v *SlowQueries) View() string {
-	if v.err != nil {
-		return fmt.Sprintf("Error: %v", v.err)
+// Stop stops the periodic refresh loop.
+func (v *SlowQueries) Stop() {
+	if v.ticker != nil {
+		v.ticker.Stop()
 	}
-	return v.table.View()
+	if v.done != nil {
+		close(v.done)
+	}
 }
 
-func (v *SlowQueries) updateRows() {
-	var rows []table.Row
-	for _, sq := range v.data {
+func (v *SlowQueries) refresh() {
+	ctx := context.Background()
+	data, err := v.db.GetSlowQueries(ctx)
+	if err != nil {
+		return
+	}
+	v.mu.Lock()
+	v.data = data
+	v.mu.Unlock()
+}
+
+func (v *SlowQueries) render() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	sel, _ := v.table.GetSelection()
+	v.table.Clear()
+
+	headers := []string{"QUERY", "CALLS", "TOTAL", "MEAN", "ROWS/CALL", "HIT%"}
+	for col, h := range headers {
+		cell := tview.NewTableCell(h).
+			SetTextColor(theme.ColorTableHeader).
+			SetAttributes(tcell.AttrBold).
+			SetSelectable(false)
+		if col == 0 {
+			cell.SetExpansion(1)
+		}
+		v.table.SetCell(0, col, cell)
+	}
+
+	for i, s := range v.data {
+		row := i + 1
 		rowsPerCall := int64(0)
-		if sq.Calls > 0 {
-			rowsPerCall = sq.Rows / sq.Calls
+		if s.Calls > 0 {
+			rowsPerCall = s.Rows / s.Calls
 		}
-		rows = append(rows, table.NewRow(table.RowData{
-			"query":    truncate(sq.Query, 30),
-			"calls":    fmt.Sprintf("%d", sq.Calls),
-			"total":    formatDuration(time.Duration(sq.TotalTime * float64(time.Millisecond))),
-			"mean":     formatDuration(time.Duration(sq.MeanTime * float64(time.Millisecond))),
-			"rowscall": fmt.Sprintf("%d", rowsPerCall),
-			"hit":      fmt.Sprintf("%.1f%%", sq.HitRatio*100),
-		}))
-	}
-	v.table = v.table.WithRows(rows)
-}
 
-func (v *SlowQueries) fetchData() tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		queries, err := v.db.GetSlowQueries(ctx)
-		if err != nil {
-			return slowQueriesDataMsg{err: err}
+		var totalStr string
+		if s.TotalTime >= 1000 {
+			totalStr = formatDuration(time.Duration(s.TotalTime) * time.Millisecond)
+		} else {
+			totalStr = fmt.Sprintf("%.0fms", s.TotalTime)
 		}
-		return slowQueriesDataMsg{queries: queries}
-	}
-}
 
-func (v *SlowQueries) tick() tea.Cmd {
-	return tea.Tick(slowQueriesRefreshInterval, func(time.Time) tea.Msg {
-		return slowQueriesTickMsg{}
-	})
+		var meanStr string
+		if s.MeanTime >= 1000 {
+			meanStr = formatDuration(time.Duration(s.MeanTime) * time.Millisecond)
+		} else {
+			meanStr = fmt.Sprintf("%.0fms", s.MeanTime)
+		}
+
+		values := []string{
+			truncate(s.Query, 80),
+			fmt.Sprintf("%d", s.Calls),
+			totalStr,
+			meanStr,
+			fmt.Sprintf("%d", rowsPerCall),
+			fmt.Sprintf("%.1f%%", s.HitRatio*100),
+		}
+		for col, val := range values {
+			cell := tview.NewTableCell(val).SetTextColor(theme.ColorFg)
+			if col == 0 {
+				cell.SetExpansion(1)
+			}
+			v.table.SetCell(row, col, cell)
+		}
+	}
+
+	if sel > 0 && sel < v.table.GetRowCount() {
+		v.table.Select(sel, 0)
+	}
 }

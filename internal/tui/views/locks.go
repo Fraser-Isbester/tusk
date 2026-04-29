@@ -3,186 +3,146 @@ package views
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/evertras/bubble-table/table"
 	"github.com/fraser-isbester/tusk/internal/db"
 	"github.com/fraser-isbester/tusk/internal/tui/theme"
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
 )
-
-const locksRefreshInterval = 2 * time.Second
-
-// locksDataMsg carries fetched lock data.
-type locksDataMsg struct {
-	locks []db.LockInfo
-	err   error
-}
-
-// locksTickMsg triggers the next fetch cycle.
-type locksTickMsg struct{}
-
-// locksStatusMsg displays a brief status message after an action.
-type locksStatusMsg struct {
-	message string
-}
 
 // Locks is the lock contention view.
 type Locks struct {
+	table  *tview.Table
 	db     *db.DB
-	table  table.Model
-	width  int
-	height int
-	paused bool
 	data   []db.LockInfo
-	err    error
+	mu     sync.Mutex
+	ticker *time.Ticker
+	done   chan struct{}
 }
 
-// NewLocks creates a new Locks view.
-func NewLocks(database *db.DB) *Locks {
-	cols := []table.Column{
-		table.NewColumn("blocked", "BLOCKED", 8),
-		table.NewColumn("blocker", "BLOCKER", 8),
-		table.NewColumn("type", "TYPE", 10),
-		table.NewColumn("mode", "MODE", 12),
-		table.NewColumn("wait", "WAIT", 8),
-		table.NewFlexColumn("blocker_app", "BLOCKER APP", 1),
-	}
-	t := table.New(cols).
-		Focused(true).
-		WithPageSize(20).
-		Border(NoBorder).
-		WithNoPagination().
-		HeaderStyle(HeaderStyle).
-		HighlightStyle(HighlightStyle)
-	return &Locks{
+// NewLocksView creates a new Locks view.
+func NewLocksView(database *db.DB) *Locks {
+	v := &Locks{
+		table: tview.NewTable().SetSelectable(true, false).SetFixed(1, 0).SetSelectedStyle(theme.SelectedStyle),
 		db:    database,
-		table: t,
 	}
+	v.table.SetBackgroundColor(tcell.ColorDefault)
+	v.table.SetBorder(false)
+	v.table.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Rune() == 't' {
+			v.terminateBlocker()
+			return nil
+		}
+		return event
+	})
+	return v
 }
 
-// SetSize updates the terminal dimensions.
-func (v *Locks) SetSize(w, h int) {
-	v.width = w
-	v.height = h
-	v.table = v.table.WithTargetWidth(w).WithPageSize(h - 2)
-}
+// Table returns the underlying tview.Table.
+func (v *Locks) Table() *tview.Table { return v.table }
 
 // ItemCount returns the number of lock entries.
-func (v *Locks) ItemCount() int { return len(v.data) }
+func (v *Locks) ItemCount() int { v.mu.Lock(); defer v.mu.Unlock(); return len(v.data) }
 
-// Init starts the first data fetch.
-func (v *Locks) Init() tea.Cmd {
-	return v.fetchData()
-}
-
-// Update handles messages.
-func (v *Locks) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case locksDataMsg:
-		if msg.err != nil {
-			v.err = msg.err
-		} else {
-			v.err = nil
-			v.data = msg.locks
-			v.updateRows()
-		}
-		if !v.paused {
-			return v, v.tick()
-		}
-		return v, nil
-
-	case locksTickMsg:
-		if !v.paused {
-			return v, v.fetchData()
-		}
-		return v, nil
-
-	case locksStatusMsg:
-		return v, v.fetchData()
-
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "p":
-			v.paused = !v.paused
-			if !v.paused {
-				return v, v.fetchData()
+// Start begins the periodic refresh loop.
+func (v *Locks) Start(app *tview.Application) {
+	v.done = make(chan struct{})
+	v.ticker = time.NewTicker(2 * time.Second)
+	go func() {
+		v.refresh()
+		app.QueueUpdateDraw(func() { v.render() })
+		for {
+			select {
+			case <-v.ticker.C:
+				v.refresh()
+				app.QueueUpdateDraw(func() { v.render() })
+			case <-v.done:
+				return
 			}
-			return v, nil
-		case "t":
-			return v, v.terminateBlocker()
+		}
+	}()
+}
+
+// Stop stops the periodic refresh loop.
+func (v *Locks) Stop() {
+	if v.ticker != nil {
+		v.ticker.Stop()
+	}
+	if v.done != nil {
+		close(v.done)
+	}
+}
+
+func (v *Locks) refresh() {
+	ctx := context.Background()
+	data, err := v.db.GetLocks(ctx)
+	if err != nil {
+		return
+	}
+	v.mu.Lock()
+	v.data = data
+	v.mu.Unlock()
+}
+
+func (v *Locks) render() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	sel, _ := v.table.GetSelection()
+	v.table.Clear()
+
+	headers := []string{"BLOCKED", "BLOCKER", "TYPE", "MODE", "WAIT", "BLOCKER APP"}
+	for col, h := range headers {
+		cell := tview.NewTableCell(h).
+			SetTextColor(theme.ColorTableHeader).
+			SetAttributes(tcell.AttrBold).
+			SetSelectable(false)
+		if col == 5 {
+			cell.SetExpansion(1)
+		}
+		v.table.SetCell(0, col, cell)
+	}
+
+	for i, l := range v.data {
+		row := i + 1
+		values := []string{
+			fmt.Sprintf("%d", l.BlockedPID),
+			fmt.Sprintf("%d", l.BlockingPID),
+			l.LockType,
+			l.Mode,
+			formatDuration(l.WaitDuration),
+			l.BlockingApp,
+		}
+		for col, val := range values {
+			cell := tview.NewTableCell(val).SetTextColor(theme.ColorYellow)
+			if col == 5 {
+				cell.SetExpansion(1)
+			}
+			v.table.SetCell(row, col, cell)
 		}
 	}
 
-	var cmd tea.Cmd
-	v.table, cmd = v.table.Update(msg)
-	return v, cmd
+	if sel > 0 && sel < v.table.GetRowCount() {
+		v.table.Select(sel, 0)
+	}
 }
 
-// View renders the locks table.
-func (v *Locks) View() string {
-	if v.err != nil {
-		return fmt.Sprintf("Error: %v", v.err)
+func (v *Locks) terminateBlocker() {
+	row, _ := v.table.GetSelection()
+	if row < 1 || row >= v.table.GetRowCount() {
+		return
 	}
-	return v.table.View()
-}
-
-func (v *Locks) updateRows() {
-	var rows []table.Row
-	for _, l := range v.data {
-		rows = append(rows, table.NewRow(table.RowData{
-			"blocked":       fmt.Sprintf("%d", l.BlockedPID),
-			"blocker":       fmt.Sprintf("%d", l.BlockingPID),
-			"type":          l.LockType,
-			"mode":          l.Mode,
-			"wait":          formatDuration(l.WaitDuration),
-			"blocker_app":   l.BlockingApp,
-			"_blocking_pid": l.BlockingPID,
-		}))
+	blockerCell := v.table.GetCell(row, 1)
+	if blockerCell == nil {
+		return
 	}
-	v.table = v.table.WithRows(rows).WithRowStyleFunc(func(input table.RowStyleFuncInput) lipgloss.Style {
-		return lipgloss.NewStyle().Foreground(theme.ColorYellow)
-	})
-}
-
-func (v *Locks) selectedBlockingPID() (int, bool) {
-	row := v.table.HighlightedRow()
-	pid, ok := row.Data["_blocking_pid"].(int)
-	if !ok {
-		return 0, false
+	var pid int
+	if _, err := fmt.Sscanf(blockerCell.Text, "%d", &pid); err != nil {
+		return
 	}
-	return pid, true
-}
-
-func (v *Locks) terminateBlocker() tea.Cmd {
-	pid, ok := v.selectedBlockingPID()
-	if !ok {
-		return nil
-	}
-	return func() tea.Msg {
+	go func() {
 		ctx := context.Background()
-		err := v.db.TerminateBackend(ctx, pid)
-		if err != nil {
-			return locksStatusMsg{message: fmt.Sprintf("terminate pid %d failed: %v", pid, err)}
-		}
-		return locksStatusMsg{message: fmt.Sprintf("terminated pid %d", pid)}
-	}
-}
-
-func (v *Locks) fetchData() tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		locks, err := v.db.GetLocks(ctx)
-		if err != nil {
-			return locksDataMsg{err: err}
-		}
-		return locksDataMsg{locks: locks}
-	}
-}
-
-func (v *Locks) tick() tea.Cmd {
-	return tea.Tick(locksRefreshInterval, func(time.Time) tea.Msg {
-		return locksTickMsg{}
-	})
+		_ = v.db.TerminateBackend(ctx, pid)
+	}()
 }
