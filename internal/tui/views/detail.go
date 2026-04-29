@@ -261,10 +261,20 @@ func renderQueryDetail(tv *tview.TextView, q db.ActiveQuery, history *db.QueryHi
 
 	b.WriteString(kvLineColored("Duration", formatDuration(q.Duration), durationColor(q.Duration)))
 
-	// Statement count
+	// Statement count (within current query batch)
 	stmts := countStatements(q.Query)
-	if stmts > 1 {
-		b.WriteString(kvLine("Statements", fmt.Sprintf("%d", stmts)))
+	b.WriteString(kvLine("Statements", fmt.Sprintf("%d", stmts)))
+
+	// Query count (distinct queries observed in this transaction via history)
+	if history != nil {
+		entries := history.Get(q.PID)
+		if len(entries) > 1 {
+			totalStmts := 0
+			for _, e := range entries {
+				totalStmts += countStatements(e.Query)
+			}
+			b.WriteString(kvLine("Queries (txn)", fmt.Sprintf("%d (%d total stmts)", len(entries), totalStmts)))
+		}
 	}
 
 	// SQLcommentor tags — parse from query text, merge across statements.
