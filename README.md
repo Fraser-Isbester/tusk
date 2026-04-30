@@ -1,6 +1,9 @@
+[![CI](https://github.com/Fraser-Isbester/tusk/actions/workflows/ci.yml/badge.svg)](https://github.com/Fraser-Isbester/tusk/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/fraser-isbester/tusk)](https://goreportcard.com/report/github.com/fraser-isbester/tusk)
+
 # Tusk
 
-A k9s-style terminal UI for real-time PostgreSQL monitoring and management. Not a database client — a tool for observing and acting on live database activity.
+A k9s-style terminal UI for real-time PostgreSQL monitoring and management. This is Not a database client, it's a tool for observing and acting on live database activity.
 
 <p align="center">
   <img src="assets/tusk-queries-view.png" width="700" alt="Queries view" />
@@ -13,7 +16,7 @@ A k9s-style terminal UI for real-time PostgreSQL monitoring and management. Not 
 - **Live views** — Queries, transactions, sessions, locks, tables, indexes with 2s auto-refresh
 - **Rules engine** — Define policy rules in YAML using [CEL](https://cel.dev/) expressions that evaluate against live database state
 - **Violation tracking** — Audit log of rule violations with timestamped event lifecycle (detected → action → cooldown → closed)
-- **Copilot mode** — Rules run in dry-run by default; manually fire actions from the Activity pane when you're ready
+- **Auto Remediation** — Automatically take actions on rule violations based on defined policies
 - **Split-pane detail views** — Query detail with formatted SQL, transaction detail with query history, lock detail with blocker/blocked side-by-side
 - **Interactive Activity pane** — Shows lock contention and rule violations per PID; Enter on a blocking PID navigates to its detail
 - **Tab navigation** — Arrow keys cycle views, Tab cycles panes within detail views
