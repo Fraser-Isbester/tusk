@@ -16,11 +16,28 @@ tasks:
     generates:
       - ./tusk
 
+  build:daemon:
+    desc: Build the tuskd daemon binary
+    cmds:
+      - go build -o tuskd ./cmd/tuskd
+    sources:
+      - ./**/*.go
+      - go.mod
+      - go.sum
+    generates:
+      - ./tuskd
+
   run:
     desc: Build and run tusk against the local dev database
     deps: [build]
     cmds:
       - ./tusk -P dev
+
+  daemon:
+    desc: Build and run the tuskd daemon against the local dev database
+    deps: [build:daemon]
+    cmds:
+      - ./tuskd -P dev
 
   dev:
     desc: Build + run (alias)
@@ -75,7 +92,7 @@ tasks:
   clean:
     desc: Clean build artifacts
     cmds:
-      - rm -f tusk
+      - rm -f tusk tuskd
 
   test:
     desc: Run all tests with Ginkgo
