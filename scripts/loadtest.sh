@@ -470,7 +470,7 @@ PIDS+=($!)
 PIDS+=($!)
 
 echo ""
-echo "All generators running (${#PIDS[@]} workers). Watch with: make run"
+echo "All generators running (${#PIDS[@]} workers). Watch with: task run"
 echo "Load will stop in ${DURATION}s or press Ctrl+C"
 echo ""
 

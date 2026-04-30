@@ -121,7 +121,13 @@ profiles:
 ## Development
 
 ```bash
-make db-up       # Start local Postgres in Docker
-make run          # Build and run against local dev DB
-make loadtest     # Generate realistic load (queries, transactions, locks, idle-in-txn)
+task db:up        # Start local Postgres in Docker
+task run          # Build and run against local dev DB
+task loadtest     # Generate realistic load (queries, transactions, locks, idle-in-txn)
+```
+
+### Testing
+```bash
+task test         # Run all tests with Ginkgo
+task test:cover   # Run tests with coverage report
 ```

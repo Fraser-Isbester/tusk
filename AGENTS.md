@@ -45,10 +45,12 @@ CEL environments are typed per resource (`QueryEnv`, `TransactionEnv`, `LockEnv`
 ## Build and test
 
 ```bash
-make build          # go build -o tusk ./cmd/tusk
-make run            # build + run with dev profile
-make db-up          # start local Postgres in Docker
-make loadtest       # generate realistic load
+task build          # go build -o tusk ./cmd/tusk
+task run            # build + run with dev profile
+task db:up          # start local Postgres in Docker
+task loadtest       # generate realistic load
+task test           # run all tests with Ginkgo
+task check          # run vet + fmt check + tests
 ./tusk -P <profile> # run with a named profile
 ./tusk '<dsn>'      # run with a direct connection string
 ```
