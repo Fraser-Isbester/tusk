@@ -1,3 +1,6 @@
+[![CI](https://github.com/Fraser-Isbester/tusk/actions/workflows/ci.yml/badge.svg)](https://github.com/Fraser-Isbester/tusk/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/fraser-isbester/tusk)](https://goreportcard.com/report/github.com/fraser-isbester/tusk)
+
 # Tusk
 
 A k9s-style terminal UI for real-time PostgreSQL monitoring and management. Not a database client — a tool for observing and acting on live database activity.

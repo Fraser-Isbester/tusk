@@ -375,15 +375,16 @@ func (a *App) updateHeader() {
 	y := "[#FFD700]"
 	r := "[#FF5F5F]"
 
-	// TUSK in big open letters (figlet "big" style)
-	o := "[#D78700]"
 	logo := []string{
-		o + tview.Escape("  _______  _    _   _____  _  __") + "[-]",
-		o + tview.Escape(" |__   __|| |  | | / ____|| |/ /") + "[-]",
-		o + tview.Escape("    | |   | |  | || (___  | ' / ") + "[-]",
-		o + tview.Escape("    | |   | |  | | \\___ \\ |  <  ") + "[-]",
-		o + tview.Escape("    | |   | |__| | ____) || . \\ ") + "[-]",
-		o + tview.Escape("    |_|    \\____/ |_____/ |_|\\_\\") + "[-]",
+		"",
+		"",
+		"",
+		c + ` _______ _     _ _______ _     _` + "[-]",
+		c + `    |    |     | |______ |____/ ` + "[-]",
+		c + `    |    |_____| ______| |    \_` + "[-]",
+		"",
+		"",
+		"",
 	}
 
 	uptimeStr := "--"
@@ -436,7 +437,7 @@ func (a *App) updateHeader() {
 	if headerWidth <= 0 {
 		headerWidth = 120
 	}
-	logoWidth := 33 // visual width of the big letters
+	logoWidth := 34 // visual width of cyberlarge logo
 
 	var lines []string
 	for i := 0; i < len(infoLines) || i < len(logo); i++ {
