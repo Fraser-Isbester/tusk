@@ -87,6 +87,13 @@ func (v *Rules) Stop() {
 	}
 }
 
+// SetEngine updates the rules engine reference.
+func (v *Rules) SetEngine(e *rules.Engine) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.engine = e
+}
+
 func (v *Rules) render() {
 	v.mu.Lock()
 	defer v.mu.Unlock()

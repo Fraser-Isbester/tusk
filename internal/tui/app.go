@@ -10,6 +10,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 
+	"github.com/fraser-isbester/tusk/internal/config"
 	"github.com/fraser-isbester/tusk/internal/db"
 	"github.com/fraser-isbester/tusk/internal/rules"
 	"github.com/fraser-isbester/tusk/internal/tui/theme"
@@ -32,6 +33,7 @@ type App struct {
 	profile  string
 	color    string
 	readonly bool
+	config   *config.Config
 
 	layout    *tview.Flex
 	header    *tview.TextView
@@ -75,13 +77,14 @@ type App struct {
 	filterText   string
 }
 
-func NewApp(database *db.DB, profileName, profileColor, connUser string, readonly bool, engine *rules.Engine) *App {
+func NewApp(database *db.DB, cfg *config.Config, profileName, profileColor, connUser string, readonly bool, engine *rules.Engine) *App {
 	a := &App{
 		app:      tview.NewApplication(),
 		db:       database,
 		profile:  profileName,
 		color:    profileColor,
 		readonly: readonly,
+		config:   cfg,
 		connUser: connUser,
 		engine:   engine,
 		viewMap:      make(map[string]View),
@@ -500,6 +503,9 @@ func (a *App) parentView() string {
 	if strings.HasPrefix(av, "table-detail") {
 		return "tables"
 	}
+	if strings.HasPrefix(av, "rule-form") || strings.HasPrefix(av, "delete-confirm") {
+		return "rules"
+	}
 	return av
 }
 
@@ -542,6 +548,8 @@ func (a *App) updateStatus() {
 		hints = append(hints, hint{"c", "cancel"}, hint{"t", "terminate"})
 	case "locks":
 		hints = append(hints, hint{"t", "terminate"})
+	case "rules":
+		hints = append(hints, hint{"n", "new"}, hint{"e", "edit"}, hint{"d", "delete"})
 	}
 
 	var parts []string
@@ -686,13 +694,41 @@ func (a *App) wireNavigation() {
 		})
 	}
 
-	// Rules: Enter -> switch to violations view with rule name filter
+	// Rules: Enter -> violations, n -> new, e -> edit, d -> delete
 	if rv, ok := a.viewMap["rules"].(*views.Rules); ok {
 		rv.Table().SetSelectedFunc(func(row, col int) {
 			if name, ok := rv.SelectedRule(); ok {
 				a.switchView("violations")
 				a.applyFilter(name)
 			}
+		})
+		rv.Table().SetInputCapture(func(evt *tcell.EventKey) *tcell.EventKey {
+			if evt.Key() != tcell.KeyRune {
+				return evt
+			}
+			switch evt.Rune() {
+			case 'n':
+				a.showRuleForm(nil)
+				return nil
+			case 'e':
+				if name, ok := rv.SelectedRule(); ok && a.config != nil {
+					if profile, err := a.config.ResolveProfile(a.profile); err == nil {
+						for _, r := range profile.Rules {
+							if r.Name == name {
+								a.showRuleForm(&r)
+								break
+							}
+						}
+					}
+				}
+				return nil
+			case 'd':
+				if name, ok := rv.SelectedRule(); ok {
+					a.showDeleteConfirm(name)
+				}
+				return nil
+			}
+			return evt
 		})
 	}
 
@@ -747,6 +783,11 @@ func (a *App) showHelp() {
 		fmt.Sprintf("    %sc%s      %sCancel query (pg_cancel_backend)%s", k, r, d, r),
 		fmt.Sprintf("    %st%s      %sTerminate backend (pg_terminate_backend)%s", k, r, d, r),
 		"",
+		h + "  Rules View" + r,
+		fmt.Sprintf("    %sn%s      %sNew rule%s", k, r, d, r),
+		fmt.Sprintf("    %se%s      %sEdit selected rule%s", k, r, d, r),
+		fmt.Sprintf("    %sd%s      %sDelete selected rule%s", k, r, d, r),
+		"",
 		h + "  Sorting (in table views)" + r,
 		fmt.Sprintf("    %sShift+Column Key%s  %sSort by column (see column headers)%s", k, r, d, r),
 		"",
@@ -767,6 +808,124 @@ func (a *App) showHelp() {
 	modal.SetBackgroundColor(tcell.ColorDefault)
 
 	a.showDetail("help-detail", modal)
+}
+
+func (a *App) popDetail(name string) {
+	a.pages.RemovePage(name)
+	if len(a.viewStack) > 0 {
+		prev := a.viewStack[len(a.viewStack)-1]
+		a.viewStack = a.viewStack[:len(a.viewStack)-1]
+		a.activeView = prev
+		a.switchView(prev)
+	}
+}
+
+func (a *App) showRuleForm(existing *rules.RuleConfig) {
+	form := views.NewRuleForm(a.app, a.readonly, existing, func(cfg rules.RuleConfig) {
+		a.saveRule(cfg, existing)
+		a.popDetail("rule-form-detail")
+	}, func() {
+		a.popDetail("rule-form-detail")
+	})
+	a.showDetail("rule-form-detail", form)
+}
+
+func (a *App) saveRule(cfg rules.RuleConfig, existing *rules.RuleConfig) {
+	if a.config == nil {
+		return
+	}
+	profile, err := a.config.ResolveProfile(a.profile)
+	if err != nil {
+		return
+	}
+
+	if existing != nil {
+		for i, r := range profile.Rules {
+			if r.Name == existing.Name {
+				profile.Rules[i] = cfg
+				break
+			}
+		}
+	} else {
+		profile.Rules = append(profile.Rules, cfg)
+	}
+
+	a.config.Profiles[a.profile] = profile
+	_ = a.config.Save()
+	a.recompileAndSwap()
+}
+
+func (a *App) deleteRule(name string) {
+	if a.config == nil {
+		return
+	}
+	profile, err := a.config.ResolveProfile(a.profile)
+	if err != nil {
+		return
+	}
+
+	for i, r := range profile.Rules {
+		if r.Name == name {
+			profile.Rules = append(profile.Rules[:i], profile.Rules[i+1:]...)
+			break
+		}
+	}
+
+	a.config.Profiles[a.profile] = profile
+	_ = a.config.Save()
+	a.recompileAndSwap()
+}
+
+func (a *App) recompileAndSwap() {
+	if a.config == nil {
+		return
+	}
+	profile, err := a.config.ResolveProfile(a.profile)
+	if err != nil {
+		return
+	}
+	compiled, err := rules.BuildRules(profile.Rules, a.readonly)
+	if err != nil {
+		return
+	}
+
+	if a.engine == nil {
+		a.engine = rules.NewEngine(compiled, a.db, 5*time.Minute, 1000)
+		if qv, ok := a.viewMap["queries"].(*views.Queries); ok {
+			qv.SetEngine(a.engine)
+		}
+		if tv, ok := a.viewMap["transactions"].(*views.Transactions); ok {
+			tv.SetEngine(a.engine)
+		}
+		if rv, ok := a.viewMap["rules"].(*views.Rules); ok {
+			rv.SetEngine(a.engine)
+		}
+		if vv, ok := a.viewMap["violations"].(*views.Violations); ok {
+			vv.SetEngine(a.engine)
+		}
+	} else {
+		a.engine.UpdateRules(compiled)
+	}
+}
+
+func (a *App) showDeleteConfirm(name string) {
+	confirm := tview.NewModal().
+		SetText(fmt.Sprintf("Delete rule '%s'?", name)).
+		AddButtons([]string{"Delete", "Cancel"}).
+		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+			a.pages.RemovePage("delete-confirm-detail")
+			if len(a.viewStack) > 0 {
+				prev := a.viewStack[len(a.viewStack)-1]
+				a.viewStack = a.viewStack[:len(a.viewStack)-1]
+				a.activeView = prev
+			}
+			if buttonLabel == "Delete" {
+				a.deleteRule(name)
+			}
+			a.switchView("rules")
+		})
+	confirm.SetBackgroundColor(tcell.ColorDefault)
+	a.showDetail("delete-confirm-detail", confirm)
 }
 
 func (a *App) showDetail(name string, detail tview.Primitive) {
