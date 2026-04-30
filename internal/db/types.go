@@ -95,7 +95,7 @@ type SlowQuery struct {
 // Transaction represents an active transaction from pg_stat_activity.
 type Transaction struct {
 	ResourceBase
-	XactStart     time.Time     // when this transaction began — unique with PID
+	XactStart     time.Time // when this transaction began — unique with PID
 	XactDuration  time.Duration
 	QueryDuration time.Duration
 	QueryText     string

@@ -9,19 +9,20 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+
 	"github.com/fraser-isbester/tusk/internal/db"
 	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
 
 // Connections is the connections view.
 type Connections struct {
-	table *tview.Table
-	db    *db.DB
+	table      *tview.Table
+	db         *db.DB
 	conns      []db.ConnectionGroup
 	filterText string
 	mu         sync.Mutex
-	ticker *time.Ticker
-	done   chan struct{}
+	ticker     *time.Ticker
+	done       chan struct{}
 }
 
 // NewConnectionsView creates a new Connections view.

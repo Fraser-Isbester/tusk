@@ -2,6 +2,12 @@
 
 A k9s-style terminal UI for real-time PostgreSQL monitoring and management. Not a database client — a tool for observing and acting on live database activity.
 
+<p align="center">
+  <img src="assets/tusk-queries-view.png" width="700" alt="Queries view" />
+  <br/>
+  <img src="assets/tusk-tx-detail.png" width="700" alt="Transaction detail" />
+</p>
+
 ## Features
 
 - **Live views** — Queries, transactions, sessions, locks, tables, indexes with 2s auto-refresh
@@ -16,9 +22,12 @@ A k9s-style terminal UI for real-time PostgreSQL monitoring and management. Not 
 
 ## Install
 
+**From source:**
 ```bash
 go install github.com/fraser-isbester/tusk/cmd/tusk@latest
 ```
+
+**Pre-built binaries:** download from [GitHub Releases](https://github.com/fraser-isbester/tusk/releases).
 
 ## Usage
 

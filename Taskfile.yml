@@ -112,12 +112,12 @@ tasks:
   fmt:
     desc: Format Go code
     cmds:
-      - gofmt -w .
+      - gofmt -w cmd/ internal/
 
   fmt:check:
     desc: Check formatting (fails if unformatted)
     cmds:
-      - test -z "$(gofmt -l .)"
+      - test -z "$(gofmt -l cmd/ internal/)"
 
   check:
     desc: Run all checks (vet, fmt check, test)

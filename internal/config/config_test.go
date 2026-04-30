@@ -12,7 +12,7 @@ import (
 var _ = Describe("Profile", func() {
 	Describe("ConnectionString", func() {
 		It("returns the URL directly when set", func() {
-			p := config.Profile{URL: "postgres://user:pass@host:5432/db"}
+			p := config.Profile{URL: "postgres://user:pass@host:5432/db"} //nolint:gosec // test fixture
 			Expect(p.ConnectionString()).To(Equal("postgres://user:pass@host:5432/db"))
 		})
 
@@ -117,7 +117,7 @@ var _ = Describe("applyProfileDefaults (via Load behavior)", func() {
 		// We can't call applyProfileDefaults directly (unexported),
 		// but we can verify the defaults through Profile behavior.
 		p := config.Profile{}
-		Expect(p.Port).To(Equal(0))           // zero before defaults applied
+		Expect(p.Port).To(Equal(0)) // zero before defaults applied
 		Expect(p.RefreshInterval).To(Equal(time.Duration(0)))
 	})
 })

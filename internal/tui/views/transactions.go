@@ -8,11 +8,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
+
 	"github.com/fraser-isbester/tusk/internal/db"
 	"github.com/fraser-isbester/tusk/internal/rules"
 	"github.com/fraser-isbester/tusk/internal/tui/theme"
-	"github.com/gdamore/tcell/v2"
-	"github.com/rivo/tview"
 )
 
 // Transactions is the transaction monitor view.

@@ -8,8 +8,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/fraser-isbester/tusk/internal/rules"
 	"gopkg.in/yaml.v3"
+
+	"github.com/fraser-isbester/tusk/internal/rules"
 )
 
 // Config holds all configuration profiles for Tusk.
@@ -20,17 +21,17 @@ type Config struct {
 
 // Profile represents a single PostgreSQL connection profile.
 type Profile struct {
-	Host            string        `yaml:"host"`
-	Port            int           `yaml:"port"`
-	User            string        `yaml:"user"`
-	Password        string        `yaml:"password"`
-	Database        string        `yaml:"database"`
-	SSLMode         string        `yaml:"sslmode"`
-	URL             string        `yaml:"url"`
-	Readonly        bool                `yaml:"readonly"`
-	Color           string              `yaml:"color"`
-	RefreshInterval time.Duration       `yaml:"refresh_interval"`
-	Rules           []rules.RuleConfig  `yaml:"rules"`
+	Host            string             `yaml:"host"`
+	Port            int                `yaml:"port"`
+	User            string             `yaml:"user"`
+	Password        string             `yaml:"password"`
+	Database        string             `yaml:"database"`
+	SSLMode         string             `yaml:"sslmode"`
+	URL             string             `yaml:"url"`
+	Readonly        bool               `yaml:"readonly"`
+	Color           string             `yaml:"color"`
+	RefreshInterval time.Duration      `yaml:"refresh_interval"`
+	Rules           []rules.RuleConfig `yaml:"rules"`
 }
 
 // ConnectionString returns a PostgreSQL connection string for this profile.
@@ -88,7 +89,7 @@ func Load() (*Config, error) {
 	// Try config file first.
 	cfgPath, err := configPath()
 	if err == nil {
-		data, readErr := os.ReadFile(cfgPath)
+		data, readErr := os.ReadFile(cfgPath) //nolint:gosec // path from configPath(), not user input
 		if readErr == nil {
 			cfg := &Config{}
 			if parseErr := yaml.Unmarshal(data, cfg); parseErr != nil {

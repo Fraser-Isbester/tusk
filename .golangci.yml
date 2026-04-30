@@ -1,27 +1,30 @@
+version: "2"
+
 linters:
   enable:
     - errcheck
     - govet
     - staticcheck
     - unused
-    - gosimple
     - ineffassign
-    - typecheck
     - misspell
-    - gofmt
-    - goimports
     - gosec
     - unconvert
     - unparam
     - prealloc
+  settings:
+    misspell:
+      locale: US
 
-linters-settings:
-  goimports:
-    local-prefixes: github.com/fraser-isbester/tusk
-  misspell:
-    locale: US
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/fraser-isbester/tusk
 
 issues:
-  exclude-use-default: false
   max-issues-per-linter: 0
   max-same-issues: 0

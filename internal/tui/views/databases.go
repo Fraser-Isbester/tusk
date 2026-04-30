@@ -8,19 +8,20 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+
 	"github.com/fraser-isbester/tusk/internal/db"
 	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
 
 // Databases is the databases view.
 type Databases struct {
-	table     *tview.Table
-	db        *db.DB
+	table      *tview.Table
+	db         *db.DB
 	databases  []db.DatabaseInfo
 	filterText string
 	mu         sync.Mutex
-	ticker    *time.Ticker
-	done      chan struct{}
+	ticker     *time.Ticker
+	done       chan struct{}
 }
 
 // NewDatabasesView creates a new Databases view.

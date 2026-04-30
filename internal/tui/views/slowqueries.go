@@ -7,21 +7,22 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fraser-isbester/tusk/internal/db"
-	"github.com/fraser-isbester/tusk/internal/tui/theme"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+
+	"github.com/fraser-isbester/tusk/internal/db"
+	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
 
 // SlowQueries is the slow queries view.
 type SlowQueries struct {
-	table  *tview.Table
-	db     *db.DB
+	table      *tview.Table
+	db         *db.DB
 	data       []db.SlowQuery
 	filterText string
 	mu         sync.Mutex
-	ticker *time.Ticker
-	done   chan struct{}
+	ticker     *time.Ticker
+	done       chan struct{}
 }
 
 // NewSlowQueriesView creates a new SlowQueries view.

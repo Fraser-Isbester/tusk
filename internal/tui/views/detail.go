@@ -8,11 +8,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
+
 	"github.com/fraser-isbester/tusk/internal/db"
 	"github.com/fraser-isbester/tusk/internal/rules"
 	"github.com/fraser-isbester/tusk/internal/tui/theme"
-	"github.com/gdamore/tcell/v2"
-	"github.com/rivo/tview"
 )
 
 // ---------------------------------------------------------------------------
@@ -28,11 +29,6 @@ func durationColor(d time.Duration) string {
 	default:
 		return "#00D700"
 	}
-}
-
-func separator(title string) string {
-	line := strings.Repeat("\u2500", 30)
-	return fmt.Sprintf("[#808080]\u2500\u2500 %s %s[-]\n", title, line)
 }
 
 func kvLine(label, value string) string {
@@ -133,8 +129,9 @@ var sqlClauseRe = regexp.MustCompile(`(?i)\b(SELECT|FROM|WHERE|JOIN|LEFT JOIN|RI
 func formatSQL(sql string) string {
 	// Protect string literals from being split
 	type span struct{ start, end int }
-	var literals []span
-	for _, m := range sqlStringRe.FindAllStringIndex(sql, -1) {
+	stringMatches := sqlStringRe.FindAllStringIndex(sql, -1)
+	literals := make([]span, 0, len(stringMatches))
+	for _, m := range stringMatches {
 		literals = append(literals, span{m[0], m[1]})
 	}
 	inLiteral := func(pos int) bool {
@@ -346,9 +343,9 @@ func NewQueryDetailView(q db.Query, dbConn *db.DB, history *db.QueryHistory, app
 				err := dbConn.CancelQuery(context.Background(), pid)
 				app.QueueUpdateDraw(func() {
 					if err != nil {
-						statusMsg = fmt.Sprintf("[#FF5F5F]Error cancelling PID %d: %s[-]", pid, err.Error())
+						statusMsg = fmt.Sprintf("[#FF5F5F]Error canceling PID %d: %s[-]", pid, err.Error())
 					} else {
-						statusMsg = fmt.Sprintf("[#00D700]Cancelled PID %d[-]", pid)
+						statusMsg = fmt.Sprintf("[#00D700]Canceled PID %d[-]", pid)
 					}
 					renderAll(q)
 				})
@@ -406,7 +403,7 @@ func renderQueryInfo(tv *tview.TextView, q db.Query, statusMsg string) {
 	left = append(left, kv{"Duration", fmt.Sprintf("[%s]%s[-]", durationColor(q.Duration), formatDuration(q.Duration))})
 	left = append(left, kv{"Statements", fmt.Sprintf("%d", countStatements(q.QueryText))})
 	if q.QueryID != 0 {
-		qhash := fmt.Sprintf("%x", uint64(q.QueryID))
+		qhash := fmt.Sprintf("%x", uint64(q.QueryID)) //nolint:gosec // display-only hex truncation
 		if len(qhash) > 8 {
 			qhash = qhash[:8]
 		}
@@ -558,7 +555,7 @@ func NewTransactionDetailView(t db.Transaction, dbConn *db.DB, history *db.Query
 		switch evt.Rune() {
 		case 't':
 			go func() {
-				dbConn.TerminateBackend(context.Background(), pid)
+				_ = dbConn.TerminateBackend(context.Background(), pid)
 			}()
 			return nil
 		case 'q':
@@ -660,10 +657,10 @@ const (
 )
 
 type activityItem struct {
-	kind     activityKind
-	pid      int    // for actLockPID: the target PID to navigate to
-	ruleName string // for actViolation: rule name to manually fire
-	targetPID int   // for actViolation: PID to act on
+	kind      activityKind
+	pid       int    // for actLockPID: the target PID to navigate to
+	ruleName  string // for actViolation: rule name to manually fire
+	targetPID int    // for actViolation: PID to act on
 }
 
 // renderActivityTable populates the activity table and returns a row→item map.
@@ -865,7 +862,7 @@ func NewLockDetailView(l db.Lock, dbConn *db.DB) *tview.Flex {
 	layout.SetInputCapture(func(evt *tcell.EventKey) *tcell.EventKey {
 		if evt.Rune() == 't' {
 			go func() {
-				dbConn.TerminateBackend(context.Background(), l.BlockingPID)
+				_ = dbConn.TerminateBackend(context.Background(), l.BlockingPID)
 			}()
 			return nil
 		}
@@ -936,7 +933,7 @@ func renderTableMeta(tv *tview.TextView, d *db.TableDetail) {
 
 func renderTableColumns(tv *tview.TextView, d *db.TableDetail) {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("[#D78700]%-20s %-16s %-8s %-6s %s[-]\n", "NAME", "TYPE", "NULL", "PK", "DEFAULT"))
+	fmt.Fprintf(&b, "[#D78700]%-20s %-16s %-8s %-6s %s[-]\n", "NAME", "TYPE", "NULL", "PK", "DEFAULT")
 	for _, c := range d.Columns {
 		nullable := "NO"
 		if c.Nullable {
@@ -950,7 +947,7 @@ func renderTableColumns(tv *tview.TextView, d *db.TableDetail) {
 		if len(defVal) > 30 {
 			defVal = defVal[:27] + "..."
 		}
-		b.WriteString(fmt.Sprintf("[white]%-20s %-16s %-8s %-6s %s[-]\n", c.Name, c.DataType, nullable, pk, defVal))
+		fmt.Fprintf(&b, "[white]%-20s %-16s %-8s %-6s %s[-]\n", c.Name, c.DataType, nullable, pk, defVal)
 	}
 	tv.SetText(b.String())
 }
@@ -961,9 +958,9 @@ func renderTableIndexes(tv *tview.TextView, d *db.TableDetail) {
 		return
 	}
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("[#D78700]%-30s %10s %10s[-]\n", "NAME", "SCANS", "SIZE"))
+	fmt.Fprintf(&b, "[#D78700]%-30s %10s %10s[-]\n", "NAME", "SCANS", "SIZE")
 	for _, idx := range d.Indexes {
-		b.WriteString(fmt.Sprintf("[white]%-30s %10d %10s[-]\n", idx.IndexName, idx.Scans, formatSize(idx.Size)))
+		fmt.Fprintf(&b, "[white]%-30s %10d %10s[-]\n", idx.IndexName, idx.Scans, formatSize(idx.Size))
 	}
 	tv.SetText(b.String())
 }
