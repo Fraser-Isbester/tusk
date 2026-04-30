@@ -74,6 +74,7 @@ func (v *Roles) Stop() {
 	}
 	if v.done != nil {
 		close(v.done)
+		v.done = nil
 	}
 }
 

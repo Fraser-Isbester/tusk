@@ -132,6 +132,14 @@ func (e *Engine) recordViolation(ctx context.Context, rule *Rule, pid int, qSnap
 		Message: fmt.Sprintf("triggering action `%s`%s", rule.Action.Name(), dryRunStr),
 	})
 
+	if rule.Cooldown > 0 {
+		existing.Events = append(existing.Events, ViolationEvent{
+			Time:    time.Now(),
+			Kind:    EventCooldown,
+			Message: fmt.Sprintf("cooldown %s", rule.Cooldown),
+		})
+	}
+
 	if rule.DryRun {
 		return
 	}
@@ -151,14 +159,66 @@ func (e *Engine) recordViolation(ctx context.Context, rule *Rule, pid int, qSnap
 			Message: fmt.Sprintf("executed %s on PID %d", rule.Action.Name(), pid),
 		})
 	}
+}
 
-	if rule.Cooldown > 0 {
-		existing.Events = append(existing.Events, ViolationEvent{
-			Time:    time.Now(),
-			Kind:    EventCooldown,
-			Message: fmt.Sprintf("cooldown %s", rule.Cooldown),
-		})
+// ManualAction manually fires an action for a violation and appends events to the log.
+// Returns the result message for display.
+func (e *Engine) ManualAction(ruleName string, pid int) string {
+	e.mu.RLock()
+	var rule *Rule
+	for i := range e.rules {
+		if e.rules[i].Name == ruleName {
+			rule = &e.rules[i]
+			break
+		}
 	}
+	e.mu.RUnlock()
+
+	if rule == nil {
+		return fmt.Sprintf("rule %q not found", ruleName)
+	}
+
+	// Find the violation and append events
+	e.violations.mu.Lock()
+	var target *Violation
+	for i := len(e.violations.violations) - 1; i >= 0; i-- {
+		v := &e.violations.violations[i]
+		if v.RuleName == ruleName && v.PID == pid {
+			target = v
+			break
+		}
+	}
+	e.violations.mu.Unlock()
+
+	if target == nil {
+		return "violation not found"
+	}
+
+	target.Events = append(target.Events, ViolationEvent{
+		Time:    time.Now(),
+		Kind:    EventAction,
+		Message: fmt.Sprintf("manual trigger of `%s`", rule.Action.Name()),
+	})
+
+	ctx := context.Background()
+	err := rule.Action.Execute(ctx, e.database, pid)
+	if err != nil {
+		msg := fmt.Sprintf("action failed: %s", err.Error())
+		target.Events = append(target.Events, ViolationEvent{
+			Time:    time.Now(),
+			Kind:    EventError,
+			Message: msg,
+		})
+		return msg
+	}
+
+	msg := fmt.Sprintf("executed %s on PID %d", rule.Action.Name(), pid)
+	target.Events = append(target.Events, ViolationEvent{
+		Time:    time.Now(),
+		Kind:    EventSent,
+		Message: msg,
+	})
+	return msg
 }
 
 // RecentViolations returns violation history within TTL, newest first.

@@ -74,6 +74,7 @@ func (v *Locks) Stop() {
 	}
 	if v.done != nil {
 		close(v.done)
+		v.done = nil
 	}
 }
 
