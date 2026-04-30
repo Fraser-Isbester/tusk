@@ -39,9 +39,11 @@ SELECT
     COALESCE(a.datname, ''),
     COALESCE(a.client_addr::text, ''),
     COALESCE(a.state, ''),
+    a.backend_start,
     COALESCE(a.wait_event_type, ''),
     COALESCE(a.wait_event, ''),
     COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - a.query_start)), 0) AS duration_sec,
+    a.query_start,
     COALESCE(a.query, ''),
     COALESCE(a.query_id, 0),
     COALESCE((SELECT bl.pid FROM pg_locks blocked
@@ -125,6 +127,7 @@ const queryTransactions = `
 SELECT a.pid, COALESCE(a.usename, '(system)'), COALESCE(a.application_name, ''),
        COALESCE(a.datname, ''),
        COALESCE(a.state, ''),
+       a.backend_start,
        COALESCE(EXTRACT(EPOCH FROM (now() - a.xact_start)), 0),
        COALESCE(EXTRACT(EPOCH FROM (now() - a.query_start)), 0),
        COALESCE(a.query, ''),
@@ -255,6 +258,7 @@ func (d *DB) GetActiveQueries(ctx context.Context) ([]Query, error) {
 		var (
 			q           Query
 			durationSec float64
+			queryStart  sql.NullTime
 		)
 		if err := rows.Scan(
 			&q.PID,
@@ -263,9 +267,11 @@ func (d *DB) GetActiveQueries(ctx context.Context) ([]Query, error) {
 			&q.Database,
 			&q.ClientAddr,
 			&q.State,
+			&q.BackendStart,
 			&q.WaitEventType,
 			&q.WaitEvent,
 			&durationSec,
+			&queryStart,
 			&q.QueryText,
 			&q.QueryID,
 			&q.BlockedBy,
@@ -273,6 +279,9 @@ func (d *DB) GetActiveQueries(ctx context.Context) ([]Query, error) {
 			return nil, fmt.Errorf("scanning active query row: %w", err)
 		}
 		q.Duration = time.Duration(durationSec * float64(time.Second))
+		if queryStart.Valid {
+			q.QueryStart = queryStart.Time
+		}
 		q.Comment = ParseSQLComment(q.QueryText)
 		queries = append(queries, q)
 	}
@@ -455,6 +464,7 @@ func (d *DB) GetTransactions(ctx context.Context) ([]Transaction, error) {
 			&t.App,
 			&t.Database,
 			&t.State,
+			&t.BackendStart,
 			&xactSec,
 			&querySec,
 			&t.QueryText,

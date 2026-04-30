@@ -127,6 +127,56 @@ func mergeComments(query string) db.SQLComment {
 	return merged
 }
 
+// formatSQL adds line breaks before major SQL clauses for readable display.
+var sqlClauseRe = regexp.MustCompile(`(?i)\b(SELECT|FROM|WHERE|JOIN|LEFT JOIN|RIGHT JOIN|INNER JOIN|OUTER JOIN|CROSS JOIN|ON|AND|OR|ORDER BY|GROUP BY|HAVING|LIMIT|OFFSET|VALUES|SET|INTO|RETURNING|UNION|EXCEPT|INTERSECT|BEGIN|COMMIT|ROLLBACK)\b`)
+
+func formatSQL(sql string) string {
+	// Protect string literals from being split
+	type span struct{ start, end int }
+	var literals []span
+	for _, m := range sqlStringRe.FindAllStringIndex(sql, -1) {
+		literals = append(literals, span{m[0], m[1]})
+	}
+	inLiteral := func(pos int) bool {
+		for _, l := range literals {
+			if pos >= l.start && pos < l.end {
+				return true
+			}
+		}
+		return false
+	}
+
+	matches := sqlClauseRe.FindAllStringIndex(sql, -1)
+	if len(matches) == 0 {
+		return sql
+	}
+
+	var b strings.Builder
+	last := 0
+	for i, m := range matches {
+		if inLiteral(m[0]) {
+			continue
+		}
+		// Don't break before the very first keyword
+		if i == 0 && m[0] == 0 {
+			continue
+		}
+		// Write everything before this keyword
+		b.WriteString(strings.TrimRight(sql[last:m[0]], " \t"))
+		keyword := strings.ToUpper(strings.TrimSpace(sql[m[0]:m[1]]))
+		// Indent sub-clauses
+		switch keyword {
+		case "AND", "OR", "ON":
+			b.WriteString("\n  " + keyword)
+		default:
+			b.WriteString("\n" + keyword)
+		}
+		last = m[1]
+	}
+	b.WriteString(sql[last:])
+	return b.String()
+}
+
 func newTextPane(title string) *tview.TextView {
 	tv := tview.NewTextView().
 		SetDynamicColors(true).
@@ -237,7 +287,7 @@ func NewQueryDetailView(q db.Query, dbConn *db.DB, history *db.QueryHistory, app
 
 	renderAll := func(q db.Query) {
 		renderQueryInfo(info, q, statusMsg)
-		query.SetText(highlightSQL(q.QueryText))
+		query.SetText(highlightSQL(formatSQL(q.QueryText)))
 		actItems = renderActivityTable(activityTable, q.PID, dbConn, engine)
 	}
 
@@ -253,6 +303,7 @@ func NewQueryDetailView(q db.Query, dbConn *db.DB, history *db.QueryHistory, app
 	}
 
 	pid := q.PID
+	backendStart := q.BackendStart
 	done := make(chan struct{})
 	var closeOnce sync.Once
 	stopRefresh := func() { closeOnce.Do(func() { close(done) }) }
@@ -269,7 +320,7 @@ func NewQueryDetailView(q db.Query, dbConn *db.DB, history *db.QueryHistory, app
 				}
 				found := false
 				for _, updated := range queries {
-					if updated.PID == pid {
+					if updated.PID == pid && updated.BackendStart.Equal(backendStart) {
 						app.QueueUpdateDraw(func() { renderAll(updated) })
 						found = true
 						break
@@ -466,6 +517,7 @@ func NewTransactionDetailView(t db.Transaction, dbConn *db.DB, history *db.Query
 	})
 
 	pid := t.PID
+	backendStart := t.BackendStart
 	done := make(chan struct{})
 	var closeOnce sync.Once
 	stopRefresh := func() { closeOnce.Do(func() { close(done) }) }
@@ -482,7 +534,7 @@ func NewTransactionDetailView(t db.Transaction, dbConn *db.DB, history *db.Query
 				}
 				found := false
 				for _, updated := range txns {
-					if updated.PID == pid {
+					if updated.PID == pid && updated.BackendStart.Equal(backendStart) {
 						app.QueueUpdateDraw(func() { renderAll(updated) })
 						found = true
 						break
@@ -563,7 +615,7 @@ func renderTxnQueriesTable(table *tview.Table, t db.Transaction, history *db.Que
 		return nil
 	}
 
-	entries := history.Get(t.PID)
+	entries := history.Get(t.PID, t.BackendStart)
 	if len(entries) == 0 {
 		table.SetTitle(" Current Query ")
 		table.SetCell(1, 0, tview.NewTableCell("").SetTextColor(theme.ColorDim))
@@ -791,13 +843,13 @@ func NewLockDetailView(l db.Lock, dbConn *db.DB) *tview.Flex {
 	var bl strings.Builder
 	bl.WriteString(kvLine("User", l.BlockedUser))
 	bl.WriteString(kvLine("App", l.BlockedApp))
-	bl.WriteString("\n" + highlightSQL(l.BlockedQuery) + "\n")
+	bl.WriteString("\n" + highlightSQL(formatSQL(l.BlockedQuery)) + "\n")
 	blocked.SetText(bl.String())
 
 	var bk strings.Builder
 	bk.WriteString(kvLine("User", l.BlockingUser))
 	bk.WriteString(kvLine("App", l.BlockingApp))
-	bk.WriteString("\n" + highlightSQL(l.BlockingQuery) + "\n")
+	bk.WriteString("\n" + highlightSQL(formatSQL(l.BlockingQuery)) + "\n")
 	blocker.SetText(bk.String())
 
 	queries := tview.NewFlex().SetDirection(tview.FlexColumn).

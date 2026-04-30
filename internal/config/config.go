@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -63,7 +64,7 @@ func (p Profile) ConnectionString() string {
 
 	if p.Password != "" {
 		return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
-			user, p.Password, host, port, db, sslmode)
+			url.PathEscape(user), url.PathEscape(p.Password), host, port, db, sslmode)
 	}
 	return fmt.Sprintf("postgres://%s@%s:%d/%s?sslmode=%s",
 		user, host, port, db, sslmode)

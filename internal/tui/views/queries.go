@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,8 @@ type Queries struct {
 	filterText   string
 	queryHistory *db.QueryHistory
 	prevPIDs     map[int]db.Query // previous poll's active queries
+	sortCol      string           // column name to sort by, "" for default
+	sortAsc      bool             // true=ascending, false=descending
 	mu           sync.Mutex
 	ticker       *time.Ticker
 	done         chan struct{}
@@ -44,24 +47,49 @@ func NewQueriesView(database *db.DB) *Queries {
 	v.table.SetBorder(true).SetBorderColor(theme.ColorBorder).SetBorderPadding(0, 0, 1, 1)
 
 	v.table.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		// Sort keys (Shift+letter) — toggle sort column
+		if event.Modifiers()&tcell.ModShift != 0 {
+			col := ""
+			switch event.Key() {
+			case tcell.KeyRune:
+				switch event.Rune() {
+				case 'P':
+					col = "PID"
+				case 'U':
+					col = "USER"
+				case 'A':
+					col = "APP"
+				case 'S':
+					col = "STATE"
+				case 'D':
+					col = "DURATION"
+				case 'W':
+					col = "WAIT"
+				}
+			}
+			if col != "" {
+				v.toggleSort(col)
+				return nil
+			}
+		}
+
+		// Action keys
 		row, _ := v.table.GetSelection()
-		if row < 1 {
-			return event
-		}
-		pid := v.pidAtRow(row)
-		if pid == 0 {
-			return event
-		}
-		ctx := context.Background()
-		switch event.Rune() {
-		case 'c':
-			_ = v.db.CancelQuery(ctx, pid)
-			v.refresh()
-			return nil
-		case 't':
-			_ = v.db.TerminateBackend(ctx, pid)
-			v.refresh()
-			return nil
+		if row >= 1 {
+			pid := v.pidAtRow(row)
+			if pid != 0 {
+				ctx := context.Background()
+				switch event.Rune() {
+				case 'c':
+					_ = v.db.CancelQuery(ctx, pid)
+					v.refresh()
+					return nil
+				case 't':
+					_ = v.db.TerminateBackend(ctx, pid)
+					v.refresh()
+					return nil
+				}
+			}
 		}
 		return event
 	})
@@ -172,6 +200,20 @@ func (v *Queries) render() {
 
 	headers := []string{"PID", "USER", "APP", "QHASH", "STATE", "WAIT", "DURATION", "STMTS", "BLOCKED", "RULES"}
 
+	// Sort indicator in headers
+	for i, h := range headers {
+		if h == v.sortCol {
+			arrow := "▲"
+			if !v.sortAsc {
+				arrow = "▼"
+			}
+			headers[i] = h + " " + arrow
+		}
+	}
+
+	// Sort active queries
+	v.sortQueries(v.queries)
+
 	// Get violated PIDs for this tick
 	var violatedPIDs map[int]rules.Violation
 	if v.engine != nil {
@@ -227,14 +269,6 @@ func (v *Queries) render() {
 			}
 		}
 
-		color := tcell.ColorWhite
-		isLongDur := q.Duration >= 30*time.Second
-		if isLongDur {
-			color = theme.ColorRed
-		} else if q.Duration >= 1*time.Second {
-			color = theme.ColorYellow
-		}
-
 		qhash := ""
 		if q.QueryID != 0 {
 			qhash = fmt.Sprintf("%x", uint64(q.QueryID))
@@ -243,18 +277,14 @@ func (v *Queries) render() {
 			}
 		}
 
+		color := theme.ColorFg
 		v.table.SetCell(row, 0, tview.NewTableCell(pid).SetTextColor(color))
 		v.table.SetCell(row, 1, tview.NewTableCell(q.User).SetTextColor(color))
 		v.table.SetCell(row, 2, tview.NewTableCell(q.App).SetTextColor(color).SetExpansion(1))
 		v.table.SetCell(row, 3, tview.NewTableCell(qhash).SetTextColor(theme.ColorDim))
 		v.table.SetCell(row, 4, tview.NewTableCell(q.State).SetTextColor(color))
 		v.table.SetCell(row, 5, tview.NewTableCell(wait).SetTextColor(color).SetExpansion(1))
-
-		durCell := tview.NewTableCell(durStr).SetTextColor(color)
-		if isLongDur {
-			durCell.SetAttributes(tcell.AttrBlink)
-		}
-		v.table.SetCell(row, 6, durCell)
+		v.table.SetCell(row, 6, tview.NewTableCell(durStr).SetTextColor(color))
 
 		stmtCount := countStatements(q.QueryText)
 		v.table.SetCell(row, 7, tview.NewTableCell(fmt.Sprintf("%d", stmtCount)).SetTextColor(color))
@@ -354,6 +384,49 @@ func (v *Queries) SetUserFilter(user string) {
 	v.mu.Lock()
 	v.userFilter = user
 	v.mu.Unlock()
+}
+
+func (v *Queries) toggleSort(col string) {
+	v.mu.Lock()
+	if v.sortCol == col {
+		v.sortAsc = !v.sortAsc
+	} else {
+		v.sortCol = col
+		v.sortAsc = true
+	}
+	v.mu.Unlock()
+	v.render()
+}
+
+func (v *Queries) sortQueries(queries []db.Query) {
+	if v.sortCol == "" {
+		return
+	}
+	sort.SliceStable(queries, func(i, j int) bool {
+		var less bool
+		switch v.sortCol {
+		case "PID":
+			less = queries[i].PID < queries[j].PID
+		case "USER":
+			less = queries[i].User < queries[j].User
+		case "APP":
+			less = queries[i].App < queries[j].App
+		case "STATE":
+			less = queries[i].State < queries[j].State
+		case "DURATION":
+			less = queries[i].Duration < queries[j].Duration
+		case "WAIT":
+			a := queries[i].WaitEventType + queries[i].WaitEvent
+			b := queries[j].WaitEventType + queries[j].WaitEvent
+			less = a < b
+		default:
+			return false
+		}
+		if !v.sortAsc {
+			return !less
+		}
+		return less
+	})
 }
 
 // SetQueryHistory sets the shared query history tracker.
