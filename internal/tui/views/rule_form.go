@@ -2,6 +2,7 @@ package views
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/fraser-isbester/tusk/internal/rules"
@@ -10,6 +11,52 @@ import (
 	"github.com/google/cel-go/cel"
 	"github.com/rivo/tview"
 )
+
+// celVars returns the variable names available for a given resource type.
+func celVars(resource string) []string {
+	switch resource {
+	case "query":
+		return []string{
+			"pid", "user", "app", "database", "client_addr", "state",
+			"duration", "wait_event_type", "wait_event", "query",
+			"route", "controller", "action_name", "framework",
+			"blocked_by", "query_id",
+		}
+	case "transaction":
+		return []string{
+			"pid", "user", "app", "database", "state",
+			"xact_duration", "query_duration", "query", "lock_count",
+		}
+	case "lock":
+		return []string{
+			"blocked_pid", "blocking_pid",
+			"blocked_user", "blocking_user",
+			"blocked_app", "blocking_app",
+			"lock_type", "mode", "wait_duration",
+		}
+	}
+	return nil
+}
+
+// celBuiltins are common CEL functions and keywords useful in rule expressions.
+var celBuiltins = []string{
+	"duration(", "true", "false",
+	"contains(", "startsWith(", "endsWith(", "matches(",
+	"size(", "int(", "string(",
+}
+
+// lastToken extracts the token currently being typed (after operators/whitespace).
+func lastToken(text string) string {
+	// Find the start of the current token
+	for i := len(text) - 1; i >= 0; i-- {
+		ch := text[i]
+		if ch == ' ' || ch == '(' || ch == ')' || ch == '&' || ch == '|' ||
+			ch == '!' || ch == '=' || ch == '<' || ch == '>' || ch == '\'' {
+			return text[i+1:]
+		}
+	}
+	return text
+}
 
 // NewRuleForm creates a rule builder form. If existing is non-nil, fields are pre-populated for editing.
 func NewRuleForm(app *tview.Application, readonly bool, existing *rules.RuleConfig, onSave func(rules.RuleConfig), onCancel func()) tview.Primitive {
@@ -99,18 +146,64 @@ func NewRuleForm(app *tview.Application, readonly bool, existing *rules.RuleConf
 		status.SetText("  [#00D700]Expression valid[-]")
 	}
 
+	// Build autocomplete function for the When field
+	autocomplete := func(text string) []string {
+		tok := lastToken(text)
+		if tok == "" {
+			return nil
+		}
+		prefix := strings.ToLower(tok)
+		var matches []string
+		for _, v := range celVars(currentResource) {
+			if strings.HasPrefix(v, prefix) && v != tok {
+				matches = append(matches, v)
+			}
+		}
+		for _, b := range celBuiltins {
+			if strings.HasPrefix(b, prefix) && b != tok {
+				matches = append(matches, b)
+			}
+		}
+		if len(matches) == 0 {
+			return nil
+		}
+		// Build full-text completions by replacing the current token
+		base := text[:len(text)-len(tok)]
+		entries := make([]string, len(matches))
+		for i, m := range matches {
+			entries[i] = base + m
+		}
+		return entries
+	}
+
 	// Add form fields
-	form.AddInputField("Name", nameVal, 40, nil, nil)
+	form.AddInputField("Name", nameVal, 0, nil, nil)
 	var whenExpr string // track separately to avoid lookup before field exists
 	whenExpr = whenVal
 	form.AddDropDown("Resource", resources, resourceIdx, func(option string, index int) {
 		currentResource = option
 		validateCEL(option, whenExpr)
 	})
-	form.AddInputField("When", whenVal, 60, nil, func(text string) {
+	whenField := tview.NewInputField().
+		SetLabel("When").
+		SetText(whenVal).
+		SetFieldWidth(0).
+		SetFieldBackgroundColor(tcell.NewRGBColor(0x1a, 0x1a, 0x1a)).
+		SetFieldTextColor(tcell.ColorWhite).
+		SetLabelColor(theme.ColorLabel)
+	whenField.SetBackgroundColor(tcell.ColorDefault)
+	whenField.SetChangedFunc(func(text string) {
 		whenExpr = text
 		validateCEL(currentResource, text)
 	})
+	whenField.SetAutocompleteFunc(autocomplete)
+	whenField.SetAutocompletedFunc(func(text string, index, source int) bool {
+		whenExpr = text
+		whenField.SetText(text)
+		validateCEL(currentResource, text)
+		return source == tview.AutocompletedNavigate
+	})
+	form.AddFormItem(whenField)
 	form.AddDropDown("Action", actions, actionIdx, nil)
 	form.AddInputField("Cooldown", cooldownVal, 20, nil, nil)
 	form.AddCheckbox("Enabled", enabledVal, nil)
@@ -121,14 +214,13 @@ func NewRuleForm(app *tview.Application, readonly bool, existing *rules.RuleConf
 
 	// Save button
 	form.AddButton("Save", func() {
-		nameField := form.GetFormItemByLabel("Name").(*tview.InputField)
-		name := nameField.GetText()
+		nameItem := form.GetFormItemByLabel("Name").(*tview.InputField)
+		name := nameItem.GetText()
 		if name == "" {
 			status.SetText("  [#FF5F5F]Name is required[-]")
 			return
 		}
 
-		whenField := form.GetFormItemByLabel("When").(*tview.InputField)
 		when := whenField.GetText()
 		if when == "" {
 			status.SetText("  [#FF5F5F]Expression is required[-]")
@@ -152,8 +244,8 @@ func NewRuleForm(app *tview.Application, readonly bool, existing *rules.RuleConf
 			return
 		}
 
-		cooldownField := form.GetFormItemByLabel("Cooldown").(*tview.InputField)
-		cooldown := cooldownField.GetText()
+		cooldownItem := form.GetFormItemByLabel("Cooldown").(*tview.InputField)
+		cooldown := cooldownItem.GetText()
 		if cooldown != "" {
 			if _, err := time.ParseDuration(cooldown); err != nil {
 				status.SetText(fmt.Sprintf("  [#FF5F5F]Invalid cooldown: %s[-]", err.Error()))
