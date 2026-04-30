@@ -177,6 +177,27 @@ func applyProfileDefaults(cfg *Config) {
 	}
 }
 
+// Save writes the config back to ~/.config/tusk/config.yaml atomically.
+func (c *Config) Save() error {
+	path, err := configPath()
+	if err != nil {
+		return err
+	}
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("marshaling config: %w", err)
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("creating config dir: %w", err)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return fmt.Errorf("writing config: %w", err)
+	}
+	return os.Rename(tmp, path)
+}
+
 func envOrDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
