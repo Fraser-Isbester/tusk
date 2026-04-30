@@ -1,8 +1,23 @@
 version: 2
 
 builds:
-  - main: ./cmd/tusk
+  - id: tusk
+    main: ./cmd/tusk
     binary: tusk
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
+  - id: tuskd
+    main: ./cmd/tuskd
+    binary: tuskd
     env:
       - CGO_ENABLED=0
     goos:
