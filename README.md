@@ -2,6 +2,9 @@
 
 A k9s-style terminal UI for real-time PostgreSQL monitoring and management. Not a database client — a tool for observing and acting on live database activity.
 
+![Queries view](assets/tusk-queries-view.png)
+![Transaction detail](assets/tusk-tx-detail.png)
+
 ## Features
 
 - **Live views** — Queries, transactions, sessions, locks, tables, indexes with 2s auto-refresh
