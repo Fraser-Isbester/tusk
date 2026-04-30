@@ -27,6 +27,9 @@ go.work.sum
 # Binary
 /tusk
 
+# Taskfile checksum cache
+.task/
+
 # env file
 .env
 
