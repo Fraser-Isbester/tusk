@@ -20,11 +20,9 @@ func NewCommandRegistry() *CommandRegistry {
 	return &CommandRegistry{
 		commands: []Command{
 			{Name: "queries", Aliases: []string{"query", "q"}, ViewName: "queries"},
-			{Name: "tables", Aliases: []string{"table", "tbl"}, ViewName: "tables"},
-			{Name: "connections", Aliases: []string{"conn", "conns"}, ViewName: "connections"},
-			{Name: "db", Aliases: []string{"database", "databases"}, ViewName: "db"},
-			{Name: "slow", Aliases: []string{"slowqueries"}, ViewName: "slow"},
 			{Name: "transactions", Aliases: []string{"txn", "tx"}, ViewName: "transactions"},
+			{Name: "sessions", Aliases: []string{"session", "conn", "conns"}, ViewName: "sessions"},
+			{Name: "tables", Aliases: []string{"table", "tbl"}, ViewName: "tables"},
 			{Name: "locks", Aliases: []string{"lock"}, ViewName: "locks"},
 			{Name: "indexes", Aliases: []string{"idx", "index"}, ViewName: "indexes"},
 			{Name: "rules", Aliases: []string{"rule"}, ViewName: "rules"},

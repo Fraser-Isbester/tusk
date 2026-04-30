@@ -105,7 +105,7 @@ func (a *App) buildLayout() {
 		SetTextAlign(tview.AlignLeft)
 	a.header.SetBackgroundColor(tcell.ColorDefault)
 
-	a.viewOrder = []string{"queries", "transactions", "connections", "tables", "locks", "indexes", "slow", "db", "rules", "violations"}
+	a.viewOrder = []string{"queries", "transactions", "sessions", "tables", "locks", "indexes", "rules", "violations"}
 
 	a.tabBar = tview.NewTextView().
 		SetDynamicColors(true).
@@ -165,10 +165,8 @@ func (a *App) registerViews() {
 	tv.SetQueryHistory(a.queryHistory)
 	a.viewMap["transactions"] = tv
 
-	a.viewMap["connections"] = views.NewConnectionsView(a.db)
+	a.viewMap["sessions"] = views.NewConnectionsView(a.db)
 	a.viewMap["tables"] = views.NewTablesView(a.db)
-	a.viewMap["db"] = views.NewDatabasesView(a.db)
-	a.viewMap["slow"] = views.NewSlowQueriesView(a.db)
 	a.viewMap["locks"] = views.NewLocksView(a.db)
 	a.viewMap["indexes"] = views.NewIndexesView(a.db)
 	a.viewMap["rules"] = views.NewRulesView(a.engine)
@@ -480,21 +478,47 @@ func (a *App) cycleTab(dir int) {
 	}
 }
 
+// parentView returns the logical parent view name for the active view.
+// Detail pages like "query-detail" map back to "queries", "txn-detail" to "transactions", etc.
+func (a *App) parentView() string {
+	av := a.activeView
+	if strings.HasPrefix(av, "query-detail") || strings.HasPrefix(av, "violation-query") {
+		return "queries"
+	}
+	if strings.HasPrefix(av, "txn-detail") || strings.HasPrefix(av, "violation-txn") {
+		return "transactions"
+	}
+	if strings.HasPrefix(av, "lock-detail") || strings.HasPrefix(av, "violation-lock") {
+		return "locks"
+	}
+	if strings.HasPrefix(av, "table-detail") {
+		return "tables"
+	}
+	return av
+}
+
 func (a *App) updateTabBar() {
+	parent := a.parentView()
+	inDetail := parent != a.activeView
+
 	var parts []string
 	for _, name := range a.viewOrder {
 		if _, ok := a.viewMap[name]; !ok {
 			continue
 		}
 		label := name
-		if name == a.activeView || strings.HasPrefix(a.activeView, name+"-") {
+		if name == parent {
 			count := 0
-			if v, ok := a.viewMap[a.activeView]; ok {
-				count = v.ItemCount()
-			} else if v, ok := a.viewMap[name]; ok {
+			if v, ok := a.viewMap[name]; ok {
 				count = v.ItemCount()
 			}
-			label = fmt.Sprintf("[#000000:#00D7FF:b] %s(%d) [-:-:-]", name, count)
+			if inDetail {
+				// Lime green for detail pages
+				label = fmt.Sprintf("[#000000:#00D700:b] %s(%d) [-:-:-]", name, count)
+			} else {
+				// Cyan for normal active view
+				label = fmt.Sprintf("[#000000:#00D7FF:b] %s(%d) [-:-:-]", name, count)
+			}
 		} else {
 			label = fmt.Sprintf("[#D78700] %s [-]", name)
 		}
@@ -620,14 +644,14 @@ func (a *App) wireNavigation() {
 	if qv, ok := a.viewMap["queries"].(*views.Queries); ok {
 		qv.Table().SetSelectedFunc(func(row, col int) {
 			if q, ok := qv.SelectedQuery(); ok {
-				detail := views.NewQueryDetailView(q, a.db, nil, a.app, a.engine)
+				detail := views.NewQueryDetailView(q, a.db, nil, a.app, a.engine, a.showDetail)
 				a.showDetail("query-detail", detail)
 			}
 		})
 	}
 
 	// Connections: Enter -> switch to queries view with user filter
-	if cv, ok := a.viewMap["connections"].(*views.Connections); ok {
+	if cv, ok := a.viewMap["sessions"].(*views.Connections); ok {
 		cv.Table().SetSelectedFunc(func(row, col int) {
 			if user, ok := cv.SelectedUser(); ok {
 				a.switchView("queries")
@@ -636,21 +660,11 @@ func (a *App) wireNavigation() {
 		})
 	}
 
-	// Transactions: Enter -> Query Detail
+	// Transactions: Enter -> Transaction Detail
 	if tv, ok := a.viewMap["transactions"].(*views.Transactions); ok {
 		tv.Table().SetSelectedFunc(func(row, col int) {
 			if t, ok := tv.SelectedTransaction(); ok {
-				q := db.Query{
-					ResourceBase: db.ResourceBase{
-						PID:   t.PID,
-						User:  t.User,
-						App:   t.App,
-						State: t.State,
-					},
-					Duration:  t.QueryDuration,
-					QueryText: t.QueryText,
-				}
-				detail := views.NewQueryDetailView(q, a.db, a.queryHistory, a.app, a.engine)
+				detail := views.NewTransactionDetailView(t, a.db, a.queryHistory, a.app, a.engine, a.showDetail)
 				a.showDetail("txn-detail", detail)
 			}
 		})
@@ -708,7 +722,7 @@ func (a *App) showViolationDetail(v rules.Violation) {
 		if queries, err := a.db.GetActiveQueries(ctx); err == nil {
 			for _, q := range queries {
 				if q.PID == v.PID {
-					detail := views.NewQueryDetailView(q, a.db, nil, a.app, a.engine)
+					detail := views.NewQueryDetailView(q, a.db, nil, a.app, a.engine, a.showDetail)
 					a.showDetail("violation-query-detail", detail)
 					return
 				}
@@ -717,20 +731,14 @@ func (a *App) showViolationDetail(v rules.Violation) {
 		if v.QuerySnap != nil {
 			q := *v.QuerySnap
 			q.State = "completed"
-			detail := views.NewQueryDetailView(q, a.db, nil, a.app, a.engine)
+			detail := views.NewQueryDetailView(q, a.db, nil, a.app, a.engine, a.showDetail)
 			a.showDetail("violation-query-detail", detail)
 		}
 	case rules.ResourceTransaction:
 		if txns, err := a.db.GetTransactions(ctx); err == nil {
 			for _, t := range txns {
 				if t.PID == v.PID {
-					q := db.Query{
-						ResourceBase: db.ResourceBase{
-							PID: t.PID, User: t.User, App: t.App, State: t.State,
-						},
-						Duration: t.QueryDuration, QueryText: t.QueryText,
-					}
-					detail := views.NewQueryDetailView(q, a.db, a.queryHistory, a.app, a.engine)
+					detail := views.NewTransactionDetailView(t, a.db, a.queryHistory, a.app, a.engine, a.showDetail)
 					a.showDetail("violation-txn-detail", detail)
 					return
 				}
@@ -738,13 +746,8 @@ func (a *App) showViolationDetail(v rules.Violation) {
 		}
 		if v.TransactionSnap != nil {
 			t := *v.TransactionSnap
-			q := db.Query{
-				ResourceBase: db.ResourceBase{
-					PID: t.PID, User: t.User, App: t.App, State: "completed",
-				},
-				Duration: t.QueryDuration, QueryText: t.QueryText,
-			}
-			detail := views.NewQueryDetailView(q, a.db, a.queryHistory, a.app, a.engine)
+			t.State = "completed"
+			detail := views.NewTransactionDetailView(t, a.db, a.queryHistory, a.app, a.engine, a.showDetail)
 			a.showDetail("violation-txn-detail", detail)
 		}
 	case rules.ResourceLock:

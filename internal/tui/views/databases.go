@@ -73,6 +73,7 @@ func (v *Databases) Stop() {
 	}
 	if v.done != nil {
 		close(v.done)
+		v.done = nil
 	}
 }
 

@@ -147,6 +147,28 @@ for i in 1 2 3; do
     sleep 3  # stagger so they have different ages
 done
 
+# ── 5b. Long-lived active transaction — many fast queries over 60s ────
+echo "[+] Long-lived active transaction (60s of fast queries)..."
+(
+    {
+        echo "SET application_name = 'data-pipeline';"
+        echo "BEGIN;"
+        for j in $(seq 1 120); do
+            # Mix of different query types, sent one at a time with short delays
+            echo "SELECT id, name, email FROM app.users ORDER BY random() LIMIT 3;"
+            sleep 0.5
+            echo "SELECT o.id, o.status, o.total_cents FROM app.orders o ORDER BY random() LIMIT 5;"
+            sleep 0.5
+            echo "SELECT count(*) FROM analytics.events WHERE event_type = 'page_view';"
+            sleep 0.5
+            echo "SELECT p.name, p.price_cents FROM app.products p WHERE id = (random()*4+1)::int;"
+            sleep 0.5
+        done
+        echo "COMMIT;"
+    } | psql "$DB" > /dev/null 2>&1 || true
+) &
+PIDS+=($!)
+
 # ── 6. Multi-statement transactions — each statement sent separately ──
 # so pg_stat_activity.query changes between polls and Tusk's query
 # history captures each one individually.

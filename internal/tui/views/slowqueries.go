@@ -67,6 +67,7 @@ func (v *SlowQueries) Stop() {
 	}
 	if v.done != nil {
 		close(v.done)
+		v.done = nil
 	}
 }
 

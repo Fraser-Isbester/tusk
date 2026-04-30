@@ -99,6 +99,7 @@ func (v *Violations) Stop() {
 	}
 	if v.done != nil {
 		close(v.done)
+		v.done = nil
 	}
 }
 
@@ -149,7 +150,7 @@ func (v *Violations) render() {
 
 	for i, viol := range v.visible {
 		row := i + 1
-		ts := viol.CreatedAt().Format("15:04:05")
+		ts := viol.CreatedAt().Format("15:04:05.000")
 
 		lastEvt := viol.LastEvent()
 		status := string(lastEvt.Kind)
