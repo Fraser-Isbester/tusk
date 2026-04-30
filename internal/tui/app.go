@@ -1,3 +1,4 @@
+// Package tui is the root terminal UI application built on tview.
 package tui
 
 import (

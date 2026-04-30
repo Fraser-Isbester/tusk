@@ -1,3 +1,4 @@
+// Package rules implements a CEL-based policy engine with violation tracking and action execution.
 package rules
 
 import (

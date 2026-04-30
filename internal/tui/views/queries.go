@@ -1,3 +1,4 @@
+// Package views implements the individual resource views for the TUI.
 package views
 
 import (

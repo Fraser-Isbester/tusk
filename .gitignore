@@ -39,6 +39,19 @@ dist/
 # env file
 .env
 
+# Hugo
+docs/public/
+docs/resources/
+docs/.hugo_build.lock
+
+# Generated API reference docs
+docs/content/docs/reference/config.md
+docs/content/docs/reference/db.md
+docs/content/docs/reference/rules.md
+docs/content/docs/reference/tui.md
+docs/content/docs/reference/theme.md
+docs/content/docs/reference/views.md
+
 # Editor/IDE
 # .idea/
 # .vscode/

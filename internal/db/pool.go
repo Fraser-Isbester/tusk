@@ -1,3 +1,4 @@
+// Package db provides PostgreSQL connectivity, query execution, and data types.
 package db
 
 import (

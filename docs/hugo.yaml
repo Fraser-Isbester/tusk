@@ -1,0 +1,29 @@
+baseURL: https://fraser-isbester.github.io/tusk/
+title: Tusk
+languageCode: en-us
+
+module:
+  imports:
+    - path: github.com/imfing/hextra
+
+menu:
+  main:
+    - name: Docs
+      pageRef: /docs
+      weight: 1
+    - name: GitHub
+      url: https://github.com/Fraser-Isbester/tusk
+      weight: 2
+      params:
+        icon: github
+
+params:
+  description: A k9s-style terminal UI for PostgreSQL monitoring
+  navbar:
+    displayTitle: true
+    displayLogo: false
+  footer:
+    displayPoweredBy: false
+  editURL:
+    enable: true
+    base: https://github.com/Fraser-Isbester/tusk/edit/main/docs/content

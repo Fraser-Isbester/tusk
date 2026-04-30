@@ -1,3 +1,4 @@
+// Package config handles YAML profile loading and connection string resolution.
 package config
 
 import (
