@@ -5,9 +5,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gdamore/tcell/v2"
+
 	"github.com/fraser-isbester/tusk/internal/rules"
 	"github.com/fraser-isbester/tusk/internal/tui/theme"
-	"github.com/gdamore/tcell/v2"
 )
 
 // formatSize converts bytes to a human-readable string (B, KB, MB, GB, TB).
@@ -72,20 +73,6 @@ func timeAgo(t *time.Time) string {
 		days := int(d.Hours()) / 24
 		return fmt.Sprintf("%dd ago", days)
 	}
-}
-
-// rowContains checks if any column in a row contains the filter substring (case-insensitive).
-func rowContains(columns []string, filter string) bool {
-	if filter == "" {
-		return true
-	}
-	f := strings.ToLower(filter)
-	for _, col := range columns {
-		if strings.Contains(strings.ToLower(col), f) {
-			return true
-		}
-	}
-	return false
 }
 
 // truncate shortens a string to maxLen, appending "..." if truncated.

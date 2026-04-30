@@ -9,19 +9,20 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+
 	"github.com/fraser-isbester/tusk/internal/db"
 	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
 
 // Roles is the roles view.
 type Roles struct {
-	table  *tview.Table
-	db     *db.DB
+	table      *tview.Table
+	db         *db.DB
 	roles      []db.RoleInfo
 	filterText string
 	mu         sync.Mutex
-	ticker *time.Ticker
-	done   chan struct{}
+	ticker     *time.Ticker
+	done       chan struct{}
 }
 
 // NewRolesView creates a new Roles view.

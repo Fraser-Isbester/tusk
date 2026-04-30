@@ -7,21 +7,22 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fraser-isbester/tusk/internal/db"
-	"github.com/fraser-isbester/tusk/internal/tui/theme"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+
+	"github.com/fraser-isbester/tusk/internal/db"
+	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
 
 // Tables is the tables view.
 type Tables struct {
-	table  *tview.Table
-	db     *db.DB
+	table      *tview.Table
+	db         *db.DB
 	data       []db.TableInfo
 	filterText string
 	mu         sync.Mutex
-	ticker *time.Ticker
-	done   chan struct{}
+	ticker     *time.Ticker
+	done       chan struct{}
 }
 
 // NewTablesView creates a new Tables view.

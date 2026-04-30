@@ -5,10 +5,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fraser-isbester/tusk/internal/rules"
-	"github.com/fraser-isbester/tusk/internal/tui/theme"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+
+	"github.com/fraser-isbester/tusk/internal/rules"
+	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
 
 // Rules is the configured rules view.
@@ -23,7 +24,7 @@ type Rules struct {
 // NewRulesView creates a new Rules view.
 func NewRulesView(engine *rules.Engine) *Rules {
 	v := &Rules{
-		table: tview.NewTable().SetSelectable(true, false).SetFixed(1, 0).SetSelectedStyle(theme.SelectedStyle),
+		table:  tview.NewTable().SetSelectable(true, false).SetFixed(1, 0).SetSelectedStyle(theme.SelectedStyle),
 		engine: engine,
 	}
 	v.table.SetBackgroundColor(tcell.ColorDefault)

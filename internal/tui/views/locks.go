@@ -7,21 +7,22 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fraser-isbester/tusk/internal/db"
-	"github.com/fraser-isbester/tusk/internal/tui/theme"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+
+	"github.com/fraser-isbester/tusk/internal/db"
+	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
 
 // Locks is the lock contention view.
 type Locks struct {
-	table  *tview.Table
-	db     *db.DB
+	table      *tview.Table
+	db         *db.DB
 	data       []db.Lock
 	filterText string
 	mu         sync.Mutex
-	ticker *time.Ticker
-	done   chan struct{}
+	ticker     *time.Ticker
+	done       chan struct{}
 }
 
 // NewLocksView creates a new Locks view.

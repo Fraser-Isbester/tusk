@@ -16,9 +16,12 @@ A k9s-style terminal UI for real-time PostgreSQL monitoring and management. Not 
 
 ## Install
 
+**From source:**
 ```bash
 go install github.com/fraser-isbester/tusk/cmd/tusk@latest
 ```
+
+**Pre-built binaries:** download from [GitHub Releases](https://github.com/fraser-isbester/tusk/releases).
 
 ## Usage
 

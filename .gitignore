@@ -27,8 +27,14 @@ go.work.sum
 # Binary
 /tusk
 
+# Claude Code
+.claude/
+
 # Taskfile checksum cache
 .task/
+
+# GoReleaser
+dist/
 
 # env file
 .env

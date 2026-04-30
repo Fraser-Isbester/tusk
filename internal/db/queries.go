@@ -455,9 +455,9 @@ func (d *DB) GetTransactions(ctx context.Context) ([]Transaction, error) {
 	var txns []Transaction
 	for rows.Next() {
 		var (
-			t            Transaction
-			xactSec      float64
-			querySec     float64
+			t        Transaction
+			xactSec  float64
+			querySec float64
 		)
 		if err := rows.Scan(
 			&t.PID,

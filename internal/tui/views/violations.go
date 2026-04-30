@@ -6,10 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fraser-isbester/tusk/internal/rules"
-	"github.com/fraser-isbester/tusk/internal/tui/theme"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+
+	"github.com/fraser-isbester/tusk/internal/rules"
+	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
 
 // Violations is the violation history view.
