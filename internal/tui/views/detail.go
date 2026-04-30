@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/fraser-isbester/tusk/internal/db"
+	"github.com/fraser-isbester/tusk/internal/rules"
+	"github.com/fraser-isbester/tusk/internal/tui/theme"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -159,20 +161,19 @@ func newTextPane(title string) *tview.TextView {
 		SetScrollable(true).
 		SetWordWrap(true)
 	tv.SetBackgroundColor(tcell.ColorDefault)
-	tv.SetBorder(true).SetBorderColor(tcell.GetColor("#585858")).SetTitle(" " + title + " ").SetTitleColor(tcell.GetColor("#00D7FF"))
+	tv.SetBorder(true).SetBorderColor(theme.ColorBorderActive).SetTitle(" " + title + " ").SetTitleColor(theme.ColorLogo)
 	return tv
 }
 
 // NewQueryDetailView creates a split-pane detail view for an active query.
-func NewQueryDetailView(q db.Query, dbConn *db.DB, history *db.QueryHistory, app *tview.Application) *tview.Flex {
+func NewQueryDetailView(q db.Query, dbConn *db.DB, history *db.QueryHistory, app *tview.Application, engine *rules.Engine) *tview.Flex {
 	panes := &queryDetailPanes{
-		meta:    newTextPane("Info"),
-		query:   newTextPane("Query"),
-		rules:   newTextPane("Rules"),
-		history: newTextPane("History"),
+		meta:  newTextPane("Info"),
+		query: newTextPane("Query"),
+		rules: newTextPane("Breaches"),
 	}
 
-	// Middle row: query (left) + rules (right)
+	// Middle row: query (left) + breaches (right)
 	middle := tview.NewFlex().SetDirection(tview.FlexColumn).
 		AddItem(panes.query, 0, 2, false).
 		AddItem(panes.rules, 0, 1, false)
@@ -180,16 +181,21 @@ func NewQueryDetailView(q db.Query, dbConn *db.DB, history *db.QueryHistory, app
 
 	layout := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(panes.meta, 8, 0, false).
-		AddItem(middle, 0, 1, true).
-		AddItem(panes.history, 8, 0, false)
+		AddItem(middle, 0, 1, true)
 	layout.SetBackgroundColor(tcell.ColorDefault)
+
+	// Only add the history pane for transaction context (history != nil)
+	if history != nil {
+		panes.history = newTextPane("Transaction History")
+		layout.AddItem(panes.history, 8, 0, false)
+	}
 
 	var statusMsg string
 
 	renderAll := func(query db.Query) {
 		renderMetaPane(panes.meta, query, history, statusMsg)
 		renderQueryPane(panes.query, query)
-		renderRulesPane(panes.rules, query)
+		renderBreachesPane(panes.rules, query, engine)
 		renderHistoryPane(panes.history, query, history)
 	}
 
@@ -273,37 +279,27 @@ func renderMetaPane(tv *tview.TextView, q db.Query, history *db.QueryHistory, st
 		b.WriteString(statusMsg + "\n")
 	}
 
-	b.WriteString(kvLine("PID", fmt.Sprintf("%d", q.PID)))
-	b.WriteString(kvLine("User", q.User))
-	b.WriteString(kvLine("Application", q.App))
+	// Build left and right columns
+	type kv struct{ k, v string }
+	var left []kv
+	left = append(left, kv{"PID", fmt.Sprintf("%d", q.PID)})
+	left = append(left, kv{"User", q.User})
+	left = append(left, kv{"Application", q.App})
 	if q.ClientAddr != "" {
-		b.WriteString(kvLine("Client", q.ClientAddr))
+		left = append(left, kv{"Client", q.ClientAddr})
 	}
-	b.WriteString(kvLine("State", q.State))
-
+	left = append(left, kv{"State", q.State})
 	if q.WaitEventType != "" || q.WaitEvent != "" {
-		waitStr := q.WaitEventType
+		w := q.WaitEventType
 		if q.WaitEvent != "" {
-			waitStr += ":" + q.WaitEvent
+			w += ":" + q.WaitEvent
 		}
-		b.WriteString(kvLine("Wait Event", waitStr))
+		left = append(left, kv{"Wait Event", w})
 	}
+	left = append(left, kv{"Duration", fmt.Sprintf("[%s]%s[-]", durationColor(q.Duration), formatDuration(q.Duration))})
+	left = append(left, kv{"Statements", fmt.Sprintf("%d", countStatements(q.QueryText))})
 
-	b.WriteString(kvLineColored("Duration", formatDuration(q.Duration), durationColor(q.Duration)))
-	b.WriteString(kvLine("Statements", fmt.Sprintf("%d", countStatements(q.QueryText))))
-
-	if history != nil {
-		entries := history.Get(q.PID)
-		if len(entries) > 1 {
-			totalStmts := 0
-			for _, e := range entries {
-				totalStmts += countStatements(e.Query)
-			}
-			b.WriteString(kvLine("Queries (txn)", fmt.Sprintf("%d (%d total stmts)", len(entries), totalStmts)))
-		}
-	}
-
-	// SQLcommentor tags
+	// Right column: SQLcommenter tags
 	comment := mergeComments(q.QueryText)
 	if q.Comment.App != "" && comment.App == "" {
 		comment.App = q.Comment.App
@@ -320,24 +316,59 @@ func renderMetaPane(tv *tview.TextView, q db.Query, history *db.QueryHistory, st
 	if q.Comment.Framework != "" && comment.Framework == "" {
 		comment.Framework = q.Comment.Framework
 	}
-	if comment.App != "" || comment.Route != "" || comment.Controller != "" || comment.Action != "" || comment.Framework != "" {
-		var tags []string
-		if comment.App != "" {
-			tags = append(tags, fmt.Sprintf("[#00D7FF]app=[white]%s[-]", comment.App))
+
+	var right []kv
+	if comment.App != "" {
+		right = append(right, kv{"app", comment.App})
+	}
+	if comment.Route != "" {
+		right = append(right, kv{"route", comment.Route})
+	}
+	if comment.Controller != "" {
+		right = append(right, kv{"controller", comment.Controller})
+	}
+	if comment.Action != "" {
+		right = append(right, kv{"action", comment.Action})
+	}
+	if comment.Framework != "" {
+		right = append(right, kv{"framework", comment.Framework})
+	}
+
+	if history != nil {
+		entries := history.Get(q.PID)
+		if len(entries) > 1 {
+			totalStmts := 0
+			for _, e := range entries {
+				totalStmts += countStatements(e.Query)
+			}
+			left = append(left, kv{"Queries (txn)", fmt.Sprintf("%d (%d stmts)", len(entries), totalStmts)})
 		}
-		if comment.Route != "" {
-			tags = append(tags, fmt.Sprintf("[#00D7FF]route=[white]%s[-]", comment.Route))
+	}
+
+	// Render two columns side by side
+	rows := len(left)
+	if len(right) > rows {
+		rows = len(right)
+	}
+	for i := 0; i < rows; i++ {
+		leftStr := ""
+		if i < len(left) {
+			leftStr = fmt.Sprintf("[#D78700]%-16s[-] %s", left[i].k+":", left[i].v)
 		}
-		if comment.Controller != "" {
-			tags = append(tags, fmt.Sprintf("[#00D7FF]controller=[white]%s[-]", comment.Controller))
+		rightStr := ""
+		if i < len(right) {
+			rightStr = fmt.Sprintf("[#00D7FF]%-14s[-] [white]%s[-]", right[i].k+":", right[i].v)
 		}
-		if comment.Action != "" {
-			tags = append(tags, fmt.Sprintf("[#00D7FF]action=[white]%s[-]", comment.Action))
+		if rightStr != "" {
+			leftVisual := tview.TaggedStringWidth(leftStr)
+			pad := 45 - leftVisual
+			if pad < 2 {
+				pad = 2
+			}
+			b.WriteString(leftStr + strings.Repeat(" ", pad) + rightStr + "\n")
+		} else {
+			b.WriteString(leftStr + "\n")
 		}
-		if comment.Framework != "" {
-			tags = append(tags, fmt.Sprintf("[#00D7FF]framework=[white]%s[-]", comment.Framework))
-		}
-		b.WriteString(fmt.Sprintf("[#D78700]%-16s[-] %s\n", "Tags:", strings.Join(tags, "  ")))
 	}
 
 	tv.SetText(b.String())
@@ -347,24 +378,58 @@ func renderQueryPane(tv *tview.TextView, q db.Query) {
 	tv.SetText(highlightSQL(q.QueryText))
 }
 
-func renderRulesPane(tv *tview.TextView, q db.Query) {
-	// Show which rules match this query's attributes
+func renderBreachesPane(tv *tview.TextView, q db.Query, engine *rules.Engine) {
+	if engine == nil {
+		tv.SetText("[#808080]No rules engine[-]")
+		return
+	}
+
+	breaches := engine.RecentBreaches()
+	var matching []rules.Breach
+	for _, b := range breaches {
+		if b.PID == q.PID {
+			matching = append(matching, b)
+		}
+	}
+
+	if len(matching) == 0 {
+		tv.SetText("[#808080]No breaches for PID " + fmt.Sprintf("%d", q.PID) + "[-]")
+		return
+	}
+
 	var b strings.Builder
-	b.WriteString("[#808080]Matching rules for PID " + fmt.Sprintf("%d", q.PID) + "[-]\n\n")
-	b.WriteString("[#808080]Rules are evaluated every 2s.\nBreaches appear in the :breaches view.[-]\n")
+	for _, br := range matching {
+		status := "dry-run"
+		statusColor := "#808080"
+		if br.Error != "" {
+			status = "error"
+			statusColor = "#FF5F5F"
+		} else if br.Actioned {
+			status = "fired"
+			statusColor = "#FF5F5F"
+		} else if !br.Active {
+			status = "completed"
+			statusColor = "#808080"
+		}
+
+		b.WriteString(fmt.Sprintf("[#D78700]%s[-]\n", br.RuleName))
+		b.WriteString(fmt.Sprintf("  [#808080]%s[-]\n", br.Expression))
+		b.WriteString(fmt.Sprintf("  action: %s  status: [%s]%s[-]\n", br.Action, statusColor, status))
+		b.WriteString(fmt.Sprintf("  [#808080]%s[-]\n\n", br.Timestamp.Format("15:04:05")))
+	}
 	tv.SetText(b.String())
 }
 
 func renderHistoryPane(tv *tview.TextView, q db.Query, history *db.QueryHistory) {
-	if history == nil {
-		tv.SetText("[#808080]No transaction history[-]")
+	if tv == nil || history == nil {
 		return
 	}
 	entries := history.Get(q.PID)
 	if len(entries) <= 1 {
-		tv.SetText("[#808080]Single statement — no history[-]")
+		tv.SetText("[#808080]Single query — no transaction history[-]")
 		return
 	}
+	tv.SetTitle(fmt.Sprintf(" Transaction History (%d queries) ", len(entries)))
 	var b strings.Builder
 	for i, e := range entries {
 		prefix := "  "

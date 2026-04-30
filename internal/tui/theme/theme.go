@@ -15,7 +15,8 @@ var (
 	ColorYellow    = tcell.NewRGBColor(0xFF, 0xD7, 0x00)
 	ColorRed       = tcell.NewRGBColor(0xFF, 0x5F, 0x5F)
 	ColorHeaderBg  = tcell.NewRGBColor(0x30, 0x30, 0x30)
-	ColorBorder    = tcell.NewRGBColor(0x44, 0x44, 0x44)
+	ColorBorder       = tcell.NewRGBColor(0x00, 0x5F, 0xAF) // blue
+	ColorBorderActive = tcell.NewRGBColor(0x00, 0x87, 0xAF) // brighter cyan for detail panes
 	ColorSelectedBg = tcell.NewRGBColor(0x00, 0x5F, 0xAF)
 	ColorSelectedFg = tcell.ColorWhite
 	ColorTableHeader = tcell.NewRGBColor(0xD7, 0x87, 0x00) // orange headers

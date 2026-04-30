@@ -2,6 +2,7 @@ package views
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -74,8 +75,12 @@ func (v *Breaches) SelectedBreach() (rules.Breach, bool) {
 	return v.visible[idx], true
 }
 
-// SetFilter is a no-op for the breaches view.
-func (v *Breaches) SetFilter(_ string) {}
+// SetFilter filters breaches by rule name (substring match).
+func (v *Breaches) SetFilter(text string) {
+	v.mu.Lock()
+	v.ruleFilter = text
+	v.mu.Unlock()
+}
 
 // Start begins the periodic refresh loop.
 func (v *Breaches) Start(app *tview.Application) {
@@ -134,7 +139,7 @@ func (v *Breaches) render() {
 	// Apply rule filter
 	v.visible = v.visible[:0]
 	for _, b := range allBreaches {
-		if v.ruleFilter != "" && b.RuleName != v.ruleFilter {
+		if v.ruleFilter != "" && !strings.Contains(strings.ToLower(b.RuleName), strings.ToLower(v.ruleFilter)) {
 			continue
 		}
 		v.visible = append(v.visible, b)
