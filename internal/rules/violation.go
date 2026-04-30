@@ -127,7 +127,8 @@ func (s *ViolationStore) Prune() {
 	cutoff := time.Now().Add(-s.ttl)
 	n := 0
 	for _, v := range s.violations {
-		if v.LastEvent().Time.After(cutoff) || v.CreatedAt().After(cutoff) {
+		// Never prune active violations — they're still relevant
+		if v.Active || v.LastEvent().Time.After(cutoff) || v.CreatedAt().After(cutoff) {
 			s.violations[n] = v
 			n++
 		}
@@ -182,13 +183,9 @@ func (s *ViolationStore) ViolatedPIDs() map[int]Violation {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	cutoff := time.Now().Add(-s.ttl)
 	result := make(map[int]Violation)
 	for i := len(s.violations) - 1; i >= 0; i-- {
 		v := s.violations[i]
-		if v.CreatedAt().Before(cutoff) {
-			continue
-		}
 		if !v.Active {
 			continue
 		}

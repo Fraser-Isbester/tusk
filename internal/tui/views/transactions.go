@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fraser-isbester/tusk/internal/db"
+	"github.com/fraser-isbester/tusk/internal/rules"
 	"github.com/fraser-isbester/tusk/internal/tui/theme"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -21,6 +22,7 @@ type Transactions struct {
 	data         []db.Transaction
 	completed    []db.Transaction
 	visibleData  []db.Transaction
+	engine       *rules.Engine
 	filterText   string
 	queryHistory *db.QueryHistory
 	prevPIDs     map[int]db.Transaction
@@ -36,11 +38,18 @@ func (v *Transactions) SetQueryHistory(h *db.QueryHistory) {
 	v.queryHistory = h
 }
 
+// SetEngine sets the rules engine for violation indicators.
+func (v *Transactions) SetEngine(e *rules.Engine) {
+	v.engine = e
+}
+
 // NewTransactionsView creates a new Transactions view.
 func NewTransactionsView(database *db.DB) *Transactions {
 	v := &Transactions{
-		table: tview.NewTable().SetSelectable(true, false).SetFixed(1, 0).SetSelectedStyle(theme.SelectedStyle),
-		db:    database,
+		table:   tview.NewTable().SetSelectable(true, false).SetFixed(1, 0).SetSelectedStyle(theme.SelectedStyle),
+		db:      database,
+		sortCol: "TXN AGE",
+		sortAsc: false, // longest first
 	}
 	v.table.SetBackgroundColor(tcell.ColorDefault)
 	v.table.SetBorder(true).SetBorderColor(theme.ColorBorder).SetBorderPadding(0, 0, 1, 1)
@@ -206,7 +215,7 @@ func (v *Transactions) render() {
 	sel, _ := v.table.GetSelection()
 	v.table.Clear()
 
-	headers := []string{"PID", "USER", "APP", "STATE", "TXN AGE", "Q AGE", "QUERIES", "LOCKS"}
+	headers := []string{"PID", "USER", "APP", "STATE", "TXN AGE", "Q AGE", "QUERIES", "LOCKS", "VIOLATIONS"}
 	for i, h := range headers {
 		if h == v.sortCol {
 			arrow := "▲"
@@ -217,6 +226,11 @@ func (v *Transactions) render() {
 		}
 	}
 	v.sortData(v.data)
+
+	var violatedPIDs map[int]rules.Violation
+	if v.engine != nil {
+		violatedPIDs = v.engine.ViolatedPIDs()
+	}
 
 	for col, h := range headers {
 		cell := tview.NewTableCell(h).
@@ -255,47 +269,33 @@ func (v *Transactions) render() {
 
 		v.visibleData = append(v.visibleData, txn)
 
-		isIdleTxn := txn.State == "idle in transaction" || txn.State == "idle in transaction (aborted)"
-		isLongTxn := txn.XactDuration >= 60*time.Second
-
-		var rowColor tcell.Color
-		switch {
-		case isIdleTxn || isLongTxn:
-			rowColor = theme.ColorRed
-		case txn.XactDuration >= 30*time.Second:
-			rowColor = theme.ColorYellow
-		default:
-			rowColor = theme.ColorFg
-		}
-
-		v.table.SetCell(row, 0, tview.NewTableCell(pid).SetTextColor(rowColor))
-		v.table.SetCell(row, 1, tview.NewTableCell(txn.User).SetTextColor(rowColor))
-		v.table.SetCell(row, 2, tview.NewTableCell(txn.App).SetTextColor(rowColor).SetExpansion(1))
-
-		stateCell := tview.NewTableCell(txn.State).SetTextColor(rowColor)
-		if isIdleTxn {
-			stateCell.SetAttributes(tcell.AttrBlink)
-		}
-		v.table.SetCell(row, 3, stateCell)
-
-		txnAgeCell := tview.NewTableCell(txnAge).SetTextColor(rowColor)
-		if isLongTxn {
-			txnAgeCell.SetAttributes(tcell.AttrBlink)
-		}
-		v.table.SetCell(row, 4, txnAgeCell)
-
-		v.table.SetCell(row, 5, tview.NewTableCell(qAge).SetTextColor(rowColor))
+		color := theme.ColorFg
+		v.table.SetCell(row, 0, tview.NewTableCell(pid).SetTextColor(color))
+		v.table.SetCell(row, 1, tview.NewTableCell(txn.User).SetTextColor(color))
+		v.table.SetCell(row, 2, tview.NewTableCell(txn.App).SetTextColor(color).SetExpansion(1))
+		v.table.SetCell(row, 3, tview.NewTableCell(txn.State).SetTextColor(color))
+		v.table.SetCell(row, 4, tview.NewTableCell(txnAge).SetTextColor(color))
+		v.table.SetCell(row, 5, tview.NewTableCell(qAge).SetTextColor(color))
 
 		queryCount := 1
 		if v.queryHistory != nil {
-			if entries := v.queryHistory.Get(txn.PID, txn.BackendStart); len(entries) > 0 {
+			if entries := v.queryHistory.Get(txn.PID, txn.XactStart); len(entries) > 0 {
 				queryCount = len(entries)
 			}
 		}
-		v.table.SetCell(row, 6, tview.NewTableCell(fmt.Sprintf("%d", queryCount)).SetTextColor(rowColor))
+		v.table.SetCell(row, 6, tview.NewTableCell(fmt.Sprintf("%d", queryCount)).SetTextColor(color))
+		v.table.SetCell(row, 7, tview.NewTableCell(fmt.Sprintf("%d", txn.LockCount)).SetTextColor(color))
 
-		lockStr := fmt.Sprintf("%d", txn.LockCount)
-		v.table.SetCell(row, 7, tview.NewTableCell(lockStr).SetTextColor(rowColor))
+		// Violations column
+		violStr := ""
+		violCol := theme.ColorFg
+		if violatedPIDs != nil {
+			if viol, ok := violatedPIDs[txn.PID]; ok {
+				violStr = viol.RuleName + " " + violationIcon(viol)
+				violCol = violationColor(violatedPIDs, txn.PID)
+			}
+		}
+		v.table.SetCell(row, 8, tview.NewTableCell(violStr).SetTextColor(violCol))
 		row++
 	}
 
@@ -327,7 +327,7 @@ func (v *Transactions) render() {
 
 		queryCount := 1
 		if v.queryHistory != nil {
-			if entries := v.queryHistory.Get(txn.PID, txn.BackendStart); len(entries) > 0 {
+			if entries := v.queryHistory.Get(txn.PID, txn.XactStart); len(entries) > 0 {
 				queryCount = len(entries)
 			}
 		}
@@ -340,6 +340,7 @@ func (v *Transactions) render() {
 		v.table.SetCell(row, 5, tview.NewTableCell(qAge).SetTextColor(grey))
 		v.table.SetCell(row, 6, tview.NewTableCell(fmt.Sprintf("%d", queryCount)).SetTextColor(grey))
 		v.table.SetCell(row, 7, tview.NewTableCell(fmt.Sprintf("%d", txn.LockCount)).SetTextColor(grey))
+		v.table.SetCell(row, 8, tview.NewTableCell("").SetTextColor(grey))
 		row++
 	}
 

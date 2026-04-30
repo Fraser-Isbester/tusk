@@ -163,6 +163,9 @@ func (a *App) registerViews() {
 
 	tv := views.NewTransactionsView(a.db)
 	tv.SetQueryHistory(a.queryHistory)
+	if a.engine != nil {
+		tv.SetEngine(a.engine)
+	}
 	a.viewMap["transactions"] = tv
 
 	a.viewMap["sessions"] = views.NewConnectionsView(a.db)

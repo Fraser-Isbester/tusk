@@ -328,7 +328,7 @@ func NewQueryDetailView(q db.Query, dbConn *db.DB, history *db.QueryHistory, app
 				}
 				if !found {
 					gone := q
-					gone.State = "terminated"
+					gone.State = "ended"
 					app.QueueUpdateDraw(func() { renderAll(gone) })
 					stopRefresh()
 					return
@@ -517,7 +517,7 @@ func NewTransactionDetailView(t db.Transaction, dbConn *db.DB, history *db.Query
 	})
 
 	pid := t.PID
-	backendStart := t.BackendStart
+	xactStart := t.XactStart
 	done := make(chan struct{})
 	var closeOnce sync.Once
 	stopRefresh := func() { closeOnce.Do(func() { close(done) }) }
@@ -534,7 +534,7 @@ func NewTransactionDetailView(t db.Transaction, dbConn *db.DB, history *db.Query
 				}
 				found := false
 				for _, updated := range txns {
-					if updated.PID == pid && updated.BackendStart.Equal(backendStart) {
+					if updated.PID == pid && updated.XactStart.Equal(xactStart) {
 						app.QueueUpdateDraw(func() { renderAll(updated) })
 						found = true
 						break
@@ -543,7 +543,7 @@ func NewTransactionDetailView(t db.Transaction, dbConn *db.DB, history *db.Query
 				if !found {
 					// PID is gone — mark as terminated
 					gone := t
-					gone.State = "terminated"
+					gone.State = "ended"
 					app.QueueUpdateDraw(func() { renderAll(gone) })
 					stopRefresh()
 					return
@@ -615,7 +615,7 @@ func renderTxnQueriesTable(table *tview.Table, t db.Transaction, history *db.Que
 		return nil
 	}
 
-	entries := history.Get(t.PID, t.BackendStart)
+	entries := history.Get(t.PID, t.XactStart)
 	if len(entries) == 0 {
 		table.SetTitle(" Current Query ")
 		table.SetCell(1, 0, tview.NewTableCell("").SetTextColor(theme.ColorDim))
