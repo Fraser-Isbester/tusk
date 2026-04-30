@@ -248,6 +248,9 @@ func (a *App) setupKeys() {
 			case '/':
 				a.showFilter()
 				return nil
+			case 'h':
+				a.showHelp()
+				return nil
 			case 'q':
 				a.app.Stop()
 				return nil
@@ -533,7 +536,7 @@ func (a *App) updateTabBar() {
 
 func (a *App) updateStatus() {
 	type hint struct{ key, label string }
-	hints := []hint{{":", "cmd"}, {"/", "filter"}, {"p", "pause"}}
+	hints := []hint{{":", "cmd"}, {"/", "filter"}, {"h", "help"}, {"p", "pause"}}
 	switch a.activeView {
 	case "queries", "transactions":
 		hints = append(hints, hint{"c", "cancel"}, hint{"t", "terminate"})
@@ -707,6 +710,63 @@ func (a *App) wireNavigation() {
 			}
 		})
 	}
+}
+
+func (a *App) showHelp() {
+	help := tview.NewTextView().
+		SetDynamicColors(true).
+		SetTextAlign(tview.AlignLeft)
+	help.SetBackgroundColor(tcell.ColorDefault)
+	help.SetBorder(true).
+		SetBorderColor(theme.ColorBorder).
+		SetTitle(" Help ").
+		SetTitleColor(theme.ColorLogo)
+
+	k := "[#00D7FF]"
+	d := "[#D0D0D0]"
+	h := "[#D78700]"
+	r := "[-]"
+
+	lines := []string{
+		"",
+		h + "  Navigation" + r,
+		fmt.Sprintf("    %s←/→%s  %sCycle tabs%s", k, r, d, r),
+		fmt.Sprintf("    %sEnter%s  %sOpen detail view%s", k, r, d, r),
+		fmt.Sprintf("    %sEsc%s    %sBack / close%s", k, r, d, r),
+		"",
+		h + "  Detail Views" + r,
+		fmt.Sprintf("    %sTab%s        %sNext pane%s", k, r, d, r),
+		fmt.Sprintf("    %sShift+Tab%s  %sPrevious pane%s", k, r, d, r),
+		"",
+		h + "  Commands" + r,
+		fmt.Sprintf("    %s:%s      %sCommand prompt (type a view name)%s", k, r, d, r),
+		fmt.Sprintf("    %s/%s      %sFilter rows%s", k, r, d, r),
+		fmt.Sprintf("    %sq%s      %sQuit%s", k, r, d, r),
+		"",
+		h + "  Query / Transaction Views" + r,
+		fmt.Sprintf("    %sc%s      %sCancel query (pg_cancel_backend)%s", k, r, d, r),
+		fmt.Sprintf("    %st%s      %sTerminate backend (pg_terminate_backend)%s", k, r, d, r),
+		"",
+		h + "  Sorting (in table views)" + r,
+		fmt.Sprintf("    %sShift+Column Key%s  %sSort by column (see column headers)%s", k, r, d, r),
+		"",
+		fmt.Sprintf("    %sPress Esc or h to close%s", "[#808080]", r),
+		"",
+	}
+	help.SetText(strings.Join(lines, "\n"))
+
+	// Center the help panel
+	modal := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(nil, 0, 1, false).
+		AddItem(tview.NewFlex().
+			AddItem(nil, 0, 1, false).
+			AddItem(help, 60, 0, true).
+			AddItem(nil, 0, 1, false),
+			len(lines)+2, 0, true).
+		AddItem(nil, 0, 1, false)
+	modal.SetBackgroundColor(tcell.ColorDefault)
+
+	a.showDetail("help-detail", modal)
 }
 
 func (a *App) showDetail(name string, detail tview.Primitive) {
