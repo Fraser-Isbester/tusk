@@ -36,6 +36,7 @@ SELECT
     a.pid,
     COALESCE(a.usename, '(system)'),
     COALESCE(a.application_name, ''),
+    COALESCE(a.datname, ''),
     COALESCE(a.client_addr::text, ''),
     COALESCE(a.state, ''),
     COALESCE(a.wait_event_type, ''),
@@ -122,6 +123,7 @@ LIMIT 50
 
 const queryTransactions = `
 SELECT a.pid, COALESCE(a.usename, '(system)'), COALESCE(a.application_name, ''),
+       COALESCE(a.datname, ''),
        COALESCE(a.state, ''),
        COALESCE(EXTRACT(EPOCH FROM (now() - a.xact_start)), 0),
        COALESCE(EXTRACT(EPOCH FROM (now() - a.query_start)), 0),
@@ -241,36 +243,37 @@ func (d *DB) GetDatabaseStats(ctx context.Context) (*DatabaseStats, error) {
 
 // GetActiveQueries returns all active backends from pg_stat_activity,
 // excluding the caller's own connection.
-func (d *DB) GetActiveQueries(ctx context.Context) ([]ActiveQuery, error) {
+func (d *DB) GetActiveQueries(ctx context.Context) ([]Query, error) {
 	rows, err := d.pool.Query(ctx, queryActiveQueries)
 	if err != nil {
 		return nil, fmt.Errorf("querying active queries: %w", err)
 	}
 	defer rows.Close()
 
-	var queries []ActiveQuery
+	var queries []Query
 	for rows.Next() {
 		var (
-			q          ActiveQuery
+			q           Query
 			durationSec float64
 		)
 		if err := rows.Scan(
 			&q.PID,
 			&q.User,
-			&q.AppName,
+			&q.App,
+			&q.Database,
 			&q.ClientAddr,
 			&q.State,
 			&q.WaitEventType,
 			&q.WaitEvent,
 			&durationSec,
-			&q.Query,
+			&q.QueryText,
 			&q.QueryID,
 			&q.BlockedBy,
 		); err != nil {
 			return nil, fmt.Errorf("scanning active query row: %w", err)
 		}
 		q.Duration = time.Duration(durationSec * float64(time.Second))
-		q.Comment = ParseSQLComment(q.Query)
+		q.Comment = ParseSQLComment(q.QueryText)
 		queries = append(queries, q)
 	}
 	if err := rows.Err(); err != nil {
@@ -332,7 +335,7 @@ func (d *DB) GetConnections(ctx context.Context) ([]ConnectionGroup, error) {
 	var groups []ConnectionGroup
 	for rows.Next() {
 		var g ConnectionGroup
-		if err := rows.Scan(&g.User, &g.AppName, &g.State, &g.Count); err != nil {
+		if err := rows.Scan(&g.User, &g.App, &g.State, &g.Count); err != nil {
 			return nil, fmt.Errorf("scanning connection group row: %w", err)
 		}
 		groups = append(groups, g)
@@ -449,11 +452,12 @@ func (d *DB) GetTransactions(ctx context.Context) ([]Transaction, error) {
 		if err := rows.Scan(
 			&t.PID,
 			&t.User,
-			&t.AppName,
+			&t.App,
+			&t.Database,
 			&t.State,
 			&xactSec,
 			&querySec,
-			&t.Query,
+			&t.QueryText,
 			&t.LockCount,
 		); err != nil {
 			return nil, fmt.Errorf("scanning transaction row: %w", err)
@@ -469,17 +473,17 @@ func (d *DB) GetTransactions(ctx context.Context) ([]Transaction, error) {
 }
 
 // GetLocks returns information about blocked locks and their blockers.
-func (d *DB) GetLocks(ctx context.Context) ([]LockInfo, error) {
+func (d *DB) GetLocks(ctx context.Context) ([]Lock, error) {
 	rows, err := d.pool.Query(ctx, queryLocks)
 	if err != nil {
 		return nil, fmt.Errorf("querying locks: %w", err)
 	}
 	defer rows.Close()
 
-	var locks []LockInfo
+	var locks []Lock
 	for rows.Next() {
 		var (
-			l       LockInfo
+			l       Lock
 			waitSec float64
 		)
 		if err := rows.Scan(

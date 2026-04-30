@@ -135,7 +135,7 @@ func (v *Connections) render() {
 		if v.filterText != "" {
 			match := false
 			searchText := strings.ToLower(v.filterText)
-			for _, val := range []string{c.User, c.AppName, c.State, count} {
+			for _, val := range []string{c.User, c.App, c.State, count} {
 				if strings.Contains(strings.ToLower(val), searchText) {
 					match = true
 					break
@@ -148,7 +148,7 @@ func (v *Connections) render() {
 
 		color := tcell.ColorWhite
 		v.table.SetCell(row, 0, tview.NewTableCell(c.User).SetTextColor(color))
-		v.table.SetCell(row, 1, tview.NewTableCell(c.AppName).SetTextColor(color).SetExpansion(1))
+		v.table.SetCell(row, 1, tview.NewTableCell(c.App).SetTextColor(color).SetExpansion(1))
 		v.table.SetCell(row, 2, tview.NewTableCell(c.State).SetTextColor(color))
 		v.table.SetCell(row, 3, tview.NewTableCell(count).SetTextColor(color))
 		row++

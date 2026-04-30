@@ -78,16 +78,16 @@ func (h *QueryHistory) Get(pid int) []QueryHistoryEntry {
 }
 
 // RecordAll records observations from a slice of active queries.
-func (h *QueryHistory) RecordAll(queries []ActiveQuery) {
+func (h *QueryHistory) RecordAll(queries []Query) {
 	for _, q := range queries {
-		h.Record(q.PID, q.Query, q.State)
+		h.Record(q.PID, q.QueryText, q.State)
 	}
 }
 
 // RecordTransactions records observations from a slice of transactions.
 func (h *QueryHistory) RecordTransactions(txns []Transaction) {
 	for _, t := range txns {
-		h.Record(t.PID, t.Query, t.State)
+		h.Record(t.PID, t.QueryText, t.State)
 	}
 }
 

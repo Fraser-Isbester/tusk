@@ -28,6 +28,8 @@ func NewCommandRegistry() *CommandRegistry {
 			{Name: "transactions", Aliases: []string{"txn", "tx"}, ViewName: "transactions"},
 			{Name: "locks", Aliases: []string{"lock"}, ViewName: "locks"},
 			{Name: "indexes", Aliases: []string{"idx", "index"}, ViewName: "indexes"},
+			{Name: "rules", Aliases: []string{"rule"}, ViewName: "rules"},
+			{Name: "breaches", Aliases: []string{"breach"}, ViewName: "breaches"},
 		},
 	}
 }

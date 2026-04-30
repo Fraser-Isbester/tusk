@@ -148,7 +148,7 @@ func mergeComments(query string) db.SQLComment {
 // NewQueryDetailView creates a detail view for an active query.
 // If history is non-nil, shows the query history for this PID.
 // The view live-refreshes every 2s by re-fetching the query from the DB.
-func NewQueryDetailView(q db.ActiveQuery, dbConn *db.DB, history *db.QueryHistory, app *tview.Application) *tview.TextView {
+func NewQueryDetailView(q db.Query, dbConn *db.DB, history *db.QueryHistory, app *tview.Application) *tview.TextView {
 	tv := tview.NewTextView().
 		SetDynamicColors(true).
 		SetScrollable(true).
@@ -158,7 +158,7 @@ func NewQueryDetailView(q db.ActiveQuery, dbConn *db.DB, history *db.QueryHistor
 
 	var statusMsg string
 
-	renderWithStatus := func(query db.ActiveQuery) {
+	renderWithStatus := func(query db.Query) {
 		renderQueryDetail(tv, query, history, statusMsg)
 	}
 
@@ -240,7 +240,7 @@ func NewQueryDetailView(q db.ActiveQuery, dbConn *db.DB, history *db.QueryHistor
 	return tv
 }
 
-func renderQueryDetail(tv *tview.TextView, q db.ActiveQuery, history *db.QueryHistory, statusMsg string) {
+func renderQueryDetail(tv *tview.TextView, q db.Query, history *db.QueryHistory, statusMsg string) {
 	var b strings.Builder
 	b.WriteString("\n")
 
@@ -250,7 +250,7 @@ func renderQueryDetail(tv *tview.TextView, q db.ActiveQuery, history *db.QueryHi
 
 	b.WriteString(kvLine("PID", fmt.Sprintf("%d", q.PID)))
 	b.WriteString(kvLine("User", q.User))
-	b.WriteString(kvLine("Application", q.AppName))
+	b.WriteString(kvLine("Application", q.App))
 	if q.ClientAddr != "" {
 		b.WriteString(kvLine("Client", q.ClientAddr))
 	}
@@ -267,7 +267,7 @@ func renderQueryDetail(tv *tview.TextView, q db.ActiveQuery, history *db.QueryHi
 	b.WriteString(kvLineColored("Duration", formatDuration(q.Duration), durationColor(q.Duration)))
 
 	// Statement count (within current query batch)
-	stmts := countStatements(q.Query)
+	stmts := countStatements(q.QueryText)
 	b.WriteString(kvLine("Statements", fmt.Sprintf("%d", stmts)))
 
 	// Query count (distinct queries observed in this transaction via history)
@@ -283,7 +283,7 @@ func renderQueryDetail(tv *tview.TextView, q db.ActiveQuery, history *db.QueryHi
 	}
 
 	// SQLcommentor tags — parse from query text, merge across statements.
-	comment := mergeComments(q.Query)
+	comment := mergeComments(q.QueryText)
 	// Also merge with pre-parsed comment on the ActiveQuery.
 	if q.Comment.App != "" && comment.App == "" {
 		comment.App = q.Comment.App
@@ -324,7 +324,7 @@ func renderQueryDetail(tv *tview.TextView, q db.ActiveQuery, history *db.QueryHi
 
 	// Current query with syntax highlighting.
 	b.WriteString(separator("Query"))
-	b.WriteString(highlightSQL(q.Query) + "\n")
+	b.WriteString(highlightSQL(q.QueryText) + "\n")
 
 	// Query history for this PID.
 	if history != nil {
@@ -355,7 +355,7 @@ func renderQueryDetail(tv *tview.TextView, q db.ActiveQuery, history *db.QueryHi
 }
 
 // NewLockDetailView creates a detail view for a lock.
-func NewLockDetailView(l db.LockInfo, dbConn *db.DB) *tview.TextView {
+func NewLockDetailView(l db.Lock, dbConn *db.DB) *tview.TextView {
 	tv := tview.NewTextView().
 		SetDynamicColors(true).
 		SetScrollable(true).
@@ -378,7 +378,7 @@ func NewLockDetailView(l db.LockInfo, dbConn *db.DB) *tview.TextView {
 	return tv
 }
 
-func renderLockDetail(tv *tview.TextView, l db.LockInfo) {
+func renderLockDetail(tv *tview.TextView, l db.Lock) {
 	var b strings.Builder
 	b.WriteString("\n")
 	b.WriteString(kvLine("Lock Type", l.LockType))

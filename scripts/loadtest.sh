@@ -196,13 +196,13 @@ PIDS+=($!)
 PIDS+=($!)
 
 # ── 7. Lock contention — visible in :locks ────────────────────────────
-echo "[+] Lock contention (holder + 2 waiters)..."
+echo "[+] Lock contention (holder + 2 waiters, 15s hold)..."
 (
     run_until "$END" psql "$DB" -c "
         SET application_name = 'lock-holder';
         BEGIN;
         UPDATE app.products SET inventory = inventory WHERE id = 1;
-        SELECT pg_sleep(5);
+        SELECT pg_sleep(15);
         COMMIT;
     " > /dev/null
     sleep 1

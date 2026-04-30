@@ -10,6 +10,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"github.com/fraser-isbester/tusk/internal/db"
+	"github.com/fraser-isbester/tusk/internal/rules"
 	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
 
@@ -17,13 +18,14 @@ import (
 type Queries struct {
 	table        *tview.Table
 	db           *db.DB
-	queries      []db.ActiveQuery
-	completed    []db.ActiveQuery // recently finished queries shown in grey
-	visibleData  []db.ActiveQuery
+	queries      []db.Query
+	completed    []db.Query // recently finished queries shown in grey
+	visibleData  []db.Query
+	engine       *rules.Engine
 	userFilter   string
 	filterText   string
 	queryHistory *db.QueryHistory
-	prevPIDs     map[int]db.ActiveQuery // previous poll's active queries
+	prevPIDs     map[int]db.Query // previous poll's active queries
 	mu           sync.Mutex
 	ticker       *time.Ticker
 	done         chan struct{}
@@ -148,7 +150,7 @@ func (v *Queries) refresh() {
 	}
 
 	// Store current active queries for next comparison
-	v.prevPIDs = make(map[int]db.ActiveQuery)
+	v.prevPIDs = make(map[int]db.Query)
 	for _, q := range queries {
 		if q.State == "active" {
 			v.prevPIDs[q.PID] = q
@@ -167,7 +169,13 @@ func (v *Queries) render() {
 
 	v.table.Clear()
 
-	headers := []string{"PID", "USER", "APP", "QHASH", "STATE", "WAIT", "DURATION", "STMTS", "BLOCKED"}
+	headers := []string{"PID", "USER", "APP", "QHASH", "STATE", "WAIT", "DURATION", "STMTS", "BLOCKED", "RULES"}
+
+	// Get breached PIDs for this tick
+	var breachedPIDs map[int]rules.Breach
+	if v.engine != nil {
+		breachedPIDs = v.engine.BreachedPIDs()
+	}
 	for i, h := range headers {
 		cell := tview.NewTableCell(h).
 			SetTextColor(theme.ColorTableHeader).
@@ -207,7 +215,7 @@ func (v *Queries) render() {
 		if v.filterText != "" {
 			match := false
 			searchText := strings.ToLower(v.filterText)
-			for _, val := range []string{pid, q.User, q.AppName, q.State, wait, durStr} {
+			for _, val := range []string{pid, q.User, q.App, q.State, wait, durStr} {
 				if strings.Contains(strings.ToLower(val), searchText) {
 					match = true
 					break
@@ -236,7 +244,7 @@ func (v *Queries) render() {
 
 		v.table.SetCell(row, 0, tview.NewTableCell(pid).SetTextColor(color))
 		v.table.SetCell(row, 1, tview.NewTableCell(q.User).SetTextColor(color))
-		v.table.SetCell(row, 2, tview.NewTableCell(q.AppName).SetTextColor(color).SetExpansion(1))
+		v.table.SetCell(row, 2, tview.NewTableCell(q.App).SetTextColor(color).SetExpansion(1))
 		v.table.SetCell(row, 3, tview.NewTableCell(qhash).SetTextColor(theme.ColorDim))
 		v.table.SetCell(row, 4, tview.NewTableCell(q.State).SetTextColor(color))
 		v.table.SetCell(row, 5, tview.NewTableCell(wait).SetTextColor(color).SetExpansion(1))
@@ -247,7 +255,7 @@ func (v *Queries) render() {
 		}
 		v.table.SetCell(row, 6, durCell)
 
-		stmtCount := countStatements(q.Query)
+		stmtCount := countStatements(q.QueryText)
 		v.table.SetCell(row, 7, tview.NewTableCell(fmt.Sprintf("%d", stmtCount)).SetTextColor(color))
 
 		blockedStr := ""
@@ -255,6 +263,12 @@ func (v *Queries) render() {
 			blockedStr = fmt.Sprintf("%d", q.BlockedBy)
 		}
 		v.table.SetCell(row, 8, tview.NewTableCell(blockedStr).SetTextColor(color))
+
+		ruleStr := ""
+		if b, ok := breachedPIDs[q.PID]; ok {
+			ruleStr = b.RuleName + " " + breachIcon(b)
+		}
+		v.table.SetCell(row, 9, tview.NewTableCell(ruleStr).SetTextColor(breachColor(breachedPIDs, q.PID)))
 		row++
 	}
 
@@ -268,7 +282,7 @@ func (v *Queries) render() {
 		if v.filterText != "" {
 			match := false
 			searchText := strings.ToLower(v.filterText)
-			for _, val := range []string{pid, q.User, q.AppName, "completed"} {
+			for _, val := range []string{pid, q.User, q.App, "completed"} {
 				if strings.Contains(strings.ToLower(val), searchText) {
 					match = true
 					break
@@ -297,14 +311,15 @@ func (v *Queries) render() {
 
 		v.table.SetCell(row, 0, tview.NewTableCell(pid).SetTextColor(grey))
 		v.table.SetCell(row, 1, tview.NewTableCell(q.User).SetTextColor(grey))
-		v.table.SetCell(row, 2, tview.NewTableCell(q.AppName).SetTextColor(grey).SetExpansion(1))
+		v.table.SetCell(row, 2, tview.NewTableCell(q.App).SetTextColor(grey).SetExpansion(1))
 		v.table.SetCell(row, 3, tview.NewTableCell(qhash).SetTextColor(grey))
 		v.table.SetCell(row, 4, tview.NewTableCell("completed").SetTextColor(grey))
 		v.table.SetCell(row, 5, tview.NewTableCell("").SetTextColor(grey).SetExpansion(1))
 		v.table.SetCell(row, 6, tview.NewTableCell(durStr).SetTextColor(grey))
-		stmtCount := countStatements(q.Query)
+		stmtCount := countStatements(q.QueryText)
 		v.table.SetCell(row, 7, tview.NewTableCell(fmt.Sprintf("%d", stmtCount)).SetTextColor(grey))
 		v.table.SetCell(row, 8, tview.NewTableCell("").SetTextColor(grey))
+		v.table.SetCell(row, 9, tview.NewTableCell("").SetTextColor(grey))
 		row++
 	}
 
@@ -314,13 +329,13 @@ func (v *Queries) render() {
 }
 
 // SelectedQuery returns the query at the currently selected row.
-func (v *Queries) SelectedQuery() (db.ActiveQuery, bool) {
+func (v *Queries) SelectedQuery() (db.Query, bool) {
 	row, _ := v.table.GetSelection()
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	idx := row - 1
 	if idx < 0 || idx >= len(v.visibleData) {
-		return db.ActiveQuery{}, false
+		return db.Query{}, false
 	}
 	return v.visibleData[idx], true
 }
@@ -343,6 +358,11 @@ func (v *Queries) SetUserFilter(user string) {
 // SetQueryHistory sets the shared query history tracker.
 func (v *Queries) SetQueryHistory(h *db.QueryHistory) {
 	v.queryHistory = h
+}
+
+// SetEngine sets the rules engine for breach indicators.
+func (v *Queries) SetEngine(e *rules.Engine) {
+	v.engine = e
 }
 
 func (v *Queries) pidAtRow(row int) int {

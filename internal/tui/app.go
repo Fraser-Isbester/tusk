@@ -11,6 +11,7 @@ import (
 	"github.com/rivo/tview"
 
 	"github.com/fraser-isbester/tusk/internal/db"
+	"github.com/fraser-isbester/tusk/internal/rules"
 	"github.com/fraser-isbester/tusk/internal/tui/theme"
 	"github.com/fraser-isbester/tusk/internal/tui/views"
 )
@@ -62,6 +63,8 @@ type App struct {
 	prevXactTotal int64
 	prevTime      time.Time
 
+	engine       *rules.Engine
+
 	promptActive bool
 	promptMode   string
 	tuskColorIdx int // cycles for tusk color animation
@@ -69,13 +72,14 @@ type App struct {
 	filterText   string
 }
 
-func NewApp(database *db.DB, profileName, profileColor string, readonly bool) *App {
+func NewApp(database *db.DB, profileName, profileColor string, readonly bool, engine *rules.Engine) *App {
 	a := &App{
 		app:      tview.NewApplication(),
 		db:       database,
 		profile:  profileName,
 		color:    profileColor,
 		readonly: readonly,
+		engine:   engine,
 		viewMap:      make(map[string]View),
 		registry:     NewCommandRegistry(),
 		queryHistory: db.NewQueryHistory(50),
@@ -146,6 +150,9 @@ func (a *App) buildLayout() {
 func (a *App) registerViews() {
 	qv := views.NewQueriesView(a.db)
 	qv.SetQueryHistory(a.queryHistory)
+	if a.engine != nil {
+		qv.SetEngine(a.engine)
+	}
 	a.viewMap["queries"] = qv
 
 	tv := views.NewTransactionsView(a.db)
@@ -159,6 +166,8 @@ func (a *App) registerViews() {
 	a.viewMap["slow"] = views.NewSlowQueriesView(a.db)
 	a.viewMap["locks"] = views.NewLocksView(a.db)
 	a.viewMap["indexes"] = views.NewIndexesView(a.db)
+	a.viewMap["rules"] = views.NewRulesView(a.engine)
+	a.viewMap["breaches"] = views.NewBreachesView(a.engine)
 
 	for name, v := range a.viewMap {
 		a.pages.AddPage(name, v.Table(), true, false)
@@ -438,18 +447,35 @@ func (a *App) startServerInfoPoller() {
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 		a.fetchServerInfo()
+		a.evaluateRules()
 		a.app.QueueUpdateDraw(func() {
 			a.updateHeader()
 			a.updateCrumbs()
 		})
 		for range ticker.C {
 			a.fetchServerInfo()
+			a.evaluateRules()
 			a.app.QueueUpdateDraw(func() {
 				a.updateHeader()
 				a.updateCrumbs()
 			})
 		}
 	}()
+}
+
+func (a *App) evaluateRules() {
+	if a.engine == nil {
+		return
+	}
+	ctx := context.Background()
+	queries, _ := a.db.GetActiveQueries(ctx)
+	txns, _ := a.db.GetTransactions(ctx)
+	locks, _ := a.db.GetLocks(ctx)
+	a.engine.Evaluate(ctx, rules.Snapshot{
+		Queries:      queries,
+		Transactions: txns,
+		Locks:        locks,
+	})
 }
 
 func (a *App) fetchServerInfo() {
@@ -545,13 +571,15 @@ func (a *App) wireNavigation() {
 	if tv, ok := a.viewMap["transactions"].(*views.Transactions); ok {
 		tv.Table().SetSelectedFunc(func(row, col int) {
 			if t, ok := tv.SelectedTransaction(); ok {
-				q := db.ActiveQuery{
-					PID:      t.PID,
-					User:     t.User,
-					AppName:  t.AppName,
-					State:    t.State,
-					Duration: t.QueryDuration,
-					Query:    t.Query,
+				q := db.Query{
+					ResourceBase: db.ResourceBase{
+						PID:   t.PID,
+						User:  t.User,
+						App:   t.App,
+						State: t.State,
+					},
+					Duration:  t.QueryDuration,
+					QueryText: t.QueryText,
 				}
 				detail := views.NewQueryDetailView(q, a.db, a.queryHistory, a.app)
 				a.showDetail("txn-detail", detail)
@@ -567,6 +595,23 @@ func (a *App) wireNavigation() {
 				a.showDetail("lock-detail", detail)
 			}
 		})
+	}
+
+	// Rules: Enter -> Breaches filtered by selected rule
+	if rv, ok := a.viewMap["rules"].(*views.Rules); ok {
+		rv.Table().SetSelectedFunc(func(row, col int) {
+			if name, ok := rv.SelectedRule(); ok {
+				bv := views.NewBreachesView(a.engine)
+				bv.SetRuleFilter(name)
+				bv.SetOnSelect(func(b rules.Breach) { a.showBreachDetail(b) })
+				a.showFilteredView("breaches-"+name, bv)
+			}
+		})
+	}
+
+	// Breaches: Enter -> Resource detail for the breached PID
+	if bv, ok := a.viewMap["breaches"].(*views.Breaches); ok {
+		bv.SetOnSelect(func(b rules.Breach) { a.showBreachDetail(b) })
 	}
 
 	// Tables: Enter -> Table Detail
@@ -587,6 +632,72 @@ func (a *App) showDetail(name string, detail *tview.TextView) {
 	a.app.SetFocus(detail)
 	a.updateCrumbs()
 	a.updateStatus()
+}
+
+func (a *App) showBreachDetail(b rules.Breach) {
+	ctx := context.Background()
+	switch b.ResourceType {
+	case rules.ResourceQuery:
+		// Try live data first, fall back to snapshot
+		if queries, err := a.db.GetActiveQueries(ctx); err == nil {
+			for _, q := range queries {
+				if q.PID == b.PID {
+					detail := views.NewQueryDetailView(q, a.db, nil, a.app)
+					a.showDetail("breach-query-detail", detail)
+					return
+				}
+			}
+		}
+		if b.QuerySnap != nil {
+			q := *b.QuerySnap
+			if q.State != "completed" {
+				q.State = "completed"
+			}
+			detail := views.NewQueryDetailView(q, a.db, nil, a.app)
+			a.showDetail("breach-query-detail", detail)
+		}
+	case rules.ResourceTransaction:
+		if txns, err := a.db.GetTransactions(ctx); err == nil {
+			for _, t := range txns {
+				if t.PID == b.PID {
+					q := db.Query{
+						ResourceBase: db.ResourceBase{
+							PID: t.PID, User: t.User, App: t.App, State: t.State,
+						},
+						Duration: t.QueryDuration, QueryText: t.QueryText,
+					}
+					detail := views.NewQueryDetailView(q, a.db, a.queryHistory, a.app)
+					a.showDetail("breach-txn-detail", detail)
+					return
+				}
+			}
+		}
+		if b.TransactionSnap != nil {
+			t := *b.TransactionSnap
+			q := db.Query{
+				ResourceBase: db.ResourceBase{
+					PID: t.PID, User: t.User, App: t.App, State: "completed",
+				},
+				Duration: t.QueryDuration, QueryText: t.QueryText,
+			}
+			detail := views.NewQueryDetailView(q, a.db, a.queryHistory, a.app)
+			a.showDetail("breach-txn-detail", detail)
+		}
+	case rules.ResourceLock:
+		if locks, err := a.db.GetLocks(ctx); err == nil {
+			for _, l := range locks {
+				if l.BlockedPID == b.PID {
+					detail := views.NewLockDetailView(l, a.db)
+					a.showDetail("breach-lock-detail", detail)
+					return
+				}
+			}
+		}
+		if b.LockSnap != nil {
+			detail := views.NewLockDetailView(*b.LockSnap, a.db)
+			a.showDetail("breach-lock-detail", detail)
+		}
+	}
 }
 
 func (a *App) showFilteredView(name string, view View) {
