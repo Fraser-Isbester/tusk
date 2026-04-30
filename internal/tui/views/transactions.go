@@ -136,7 +136,7 @@ func (v *Transactions) render() {
 	sel, _ := v.table.GetSelection()
 	v.table.Clear()
 
-	headers := []string{"PID", "USER", "APP", "STATE", "TXN AGE", "Q AGE", "QUERIES"}
+	headers := []string{"PID", "USER", "APP", "STATE", "TXN AGE", "Q AGE", "QUERIES", "LOCKS"}
 	for col, h := range headers {
 		cell := tview.NewTableCell(h).
 			SetTextColor(theme.ColorTableHeader).
@@ -212,6 +212,9 @@ func (v *Transactions) render() {
 			}
 		}
 		v.table.SetCell(row, 6, tview.NewTableCell(fmt.Sprintf("%d", queryCount)).SetTextColor(rowColor))
+
+		lockStr := fmt.Sprintf("%d", txn.LockCount)
+		v.table.SetCell(row, 7, tview.NewTableCell(lockStr).SetTextColor(rowColor))
 		row++
 	}
 
@@ -255,6 +258,7 @@ func (v *Transactions) render() {
 		v.table.SetCell(row, 4, tview.NewTableCell(txnAge).SetTextColor(grey))
 		v.table.SetCell(row, 5, tview.NewTableCell(qAge).SetTextColor(grey))
 		v.table.SetCell(row, 6, tview.NewTableCell(fmt.Sprintf("%d", queryCount)).SetTextColor(grey))
+		v.table.SetCell(row, 7, tview.NewTableCell(fmt.Sprintf("%d", txn.LockCount)).SetTextColor(grey))
 		row++
 	}
 

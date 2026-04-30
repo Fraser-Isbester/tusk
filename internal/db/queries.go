@@ -33,17 +33,27 @@ WHERE datname = current_database()
 
 const queryActiveQueries = `
 SELECT
-    pid,
-    COALESCE(usename, '(system)'),
-    COALESCE(application_name, ''),
-    COALESCE(client_addr::text, ''),
-    COALESCE(state, ''),
-    COALESCE(wait_event_type, ''),
-    COALESCE(wait_event, ''),
-    COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - query_start)), 0) AS duration_sec,
-    COALESCE(query, '')
-FROM pg_stat_activity
-WHERE pid <> pg_backend_pid()
+    a.pid,
+    COALESCE(a.usename, '(system)'),
+    COALESCE(a.application_name, ''),
+    COALESCE(a.client_addr::text, ''),
+    COALESCE(a.state, ''),
+    COALESCE(a.wait_event_type, ''),
+    COALESCE(a.wait_event, ''),
+    COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - a.query_start)), 0) AS duration_sec,
+    COALESCE(a.query, ''),
+    COALESCE(a.query_id, 0),
+    COALESCE((SELECT bl.pid FROM pg_locks blocked
+              JOIN pg_locks bl ON bl.locktype = blocked.locktype
+                AND bl.database IS NOT DISTINCT FROM blocked.database
+                AND bl.relation IS NOT DISTINCT FROM blocked.relation
+                AND bl.page IS NOT DISTINCT FROM blocked.page
+                AND bl.tuple IS NOT DISTINCT FROM blocked.tuple
+                AND bl.pid <> blocked.pid
+              WHERE blocked.pid = a.pid AND NOT blocked.granted
+              LIMIT 1), 0) AS blocked_by
+FROM pg_stat_activity a
+WHERE a.pid <> pg_backend_pid()
 ORDER BY duration_sec DESC
 `
 
@@ -111,14 +121,15 @@ LIMIT 50
 `
 
 const queryTransactions = `
-SELECT pid, COALESCE(usename, '(system)'), COALESCE(application_name, ''),
-       COALESCE(state, ''),
-       COALESCE(EXTRACT(EPOCH FROM (now() - xact_start)), 0),
-       COALESCE(EXTRACT(EPOCH FROM (now() - query_start)), 0),
-       COALESCE(query, '')
-FROM pg_stat_activity
-WHERE xact_start IS NOT NULL AND pid <> pg_backend_pid()
-ORDER BY xact_start ASC
+SELECT a.pid, COALESCE(a.usename, '(system)'), COALESCE(a.application_name, ''),
+       COALESCE(a.state, ''),
+       COALESCE(EXTRACT(EPOCH FROM (now() - a.xact_start)), 0),
+       COALESCE(EXTRACT(EPOCH FROM (now() - a.query_start)), 0),
+       COALESCE(a.query, ''),
+       (SELECT count(*) FROM pg_locks WHERE pid = a.pid) AS lock_count
+FROM pg_stat_activity a
+WHERE a.xact_start IS NOT NULL AND a.pid <> pg_backend_pid()
+ORDER BY a.xact_start ASC
 `
 
 const queryLocks = `
@@ -253,6 +264,8 @@ func (d *DB) GetActiveQueries(ctx context.Context) ([]ActiveQuery, error) {
 			&q.WaitEvent,
 			&durationSec,
 			&q.Query,
+			&q.QueryID,
+			&q.BlockedBy,
 		); err != nil {
 			return nil, fmt.Errorf("scanning active query row: %w", err)
 		}
@@ -441,6 +454,7 @@ func (d *DB) GetTransactions(ctx context.Context) ([]Transaction, error) {
 			&xactSec,
 			&querySec,
 			&t.Query,
+			&t.LockCount,
 		); err != nil {
 			return nil, fmt.Errorf("scanning transaction row: %w", err)
 		}
