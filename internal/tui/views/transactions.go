@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,8 @@ type Transactions struct {
 	filterText   string
 	queryHistory *db.QueryHistory
 	prevPIDs     map[int]db.Transaction
+	sortCol      string
+	sortAsc      bool
 	mu           sync.Mutex
 	ticker       *time.Ticker
 	done         chan struct{}
@@ -42,6 +45,29 @@ func NewTransactionsView(database *db.DB) *Transactions {
 	v.table.SetBackgroundColor(tcell.ColorDefault)
 	v.table.SetBorder(true).SetBorderColor(theme.ColorBorder).SetBorderPadding(0, 0, 1, 1)
 	v.table.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Modifiers()&tcell.ModShift != 0 && event.Key() == tcell.KeyRune {
+			col := ""
+			switch event.Rune() {
+			case 'P':
+				col = "PID"
+			case 'U':
+				col = "USER"
+			case 'A':
+				col = "APP"
+			case 'S':
+				col = "STATE"
+			case 'T':
+				col = "TXN AGE"
+			case 'Q':
+				col = "Q AGE"
+			case 'L':
+				col = "LOCKS"
+			}
+			if col != "" {
+				v.toggleSort(col)
+				return nil
+			}
+		}
 		if event.Rune() == 't' {
 			v.terminateSelected()
 			return nil
@@ -85,6 +111,49 @@ func (v *Transactions) Stop() {
 		close(v.done)
 		v.done = nil
 	}
+}
+
+func (v *Transactions) toggleSort(col string) {
+	v.mu.Lock()
+	if v.sortCol == col {
+		v.sortAsc = !v.sortAsc
+	} else {
+		v.sortCol = col
+		v.sortAsc = true
+	}
+	v.mu.Unlock()
+	v.render()
+}
+
+func (v *Transactions) sortData(data []db.Transaction) {
+	if v.sortCol == "" {
+		return
+	}
+	sort.SliceStable(data, func(i, j int) bool {
+		var less bool
+		switch v.sortCol {
+		case "PID":
+			less = data[i].PID < data[j].PID
+		case "USER":
+			less = data[i].User < data[j].User
+		case "APP":
+			less = data[i].App < data[j].App
+		case "STATE":
+			less = data[i].State < data[j].State
+		case "TXN AGE":
+			less = data[i].XactDuration < data[j].XactDuration
+		case "Q AGE":
+			less = data[i].QueryDuration < data[j].QueryDuration
+		case "LOCKS":
+			less = data[i].LockCount < data[j].LockCount
+		default:
+			return false
+		}
+		if !v.sortAsc {
+			return !less
+		}
+		return less
+	})
 }
 
 // SetFilter sets the filter text for searching across all columns.
@@ -138,6 +207,17 @@ func (v *Transactions) render() {
 	v.table.Clear()
 
 	headers := []string{"PID", "USER", "APP", "STATE", "TXN AGE", "Q AGE", "QUERIES", "LOCKS"}
+	for i, h := range headers {
+		if h == v.sortCol {
+			arrow := "▲"
+			if !v.sortAsc {
+				arrow = "▼"
+			}
+			headers[i] = h + " " + arrow
+		}
+	}
+	v.sortData(v.data)
+
 	for col, h := range headers {
 		cell := tview.NewTableCell(h).
 			SetTextColor(theme.ColorTableHeader).
@@ -208,7 +288,7 @@ func (v *Transactions) render() {
 
 		queryCount := 1
 		if v.queryHistory != nil {
-			if entries := v.queryHistory.Get(txn.PID); len(entries) > 0 {
+			if entries := v.queryHistory.Get(txn.PID, txn.BackendStart); len(entries) > 0 {
 				queryCount = len(entries)
 			}
 		}
@@ -247,7 +327,7 @@ func (v *Transactions) render() {
 
 		queryCount := 1
 		if v.queryHistory != nil {
-			if entries := v.queryHistory.Get(txn.PID); len(entries) > 0 {
+			if entries := v.queryHistory.Get(txn.PID, txn.BackendStart); len(entries) > 0 {
 				queryCount = len(entries)
 			}
 		}

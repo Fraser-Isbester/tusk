@@ -4,12 +4,13 @@ import "time"
 
 // ResourceBase contains fields shared across all pg_stat_activity-derived resources.
 type ResourceBase struct {
-	PID        int
-	User       string
-	App        string
-	Database   string
-	ClientAddr string
-	State      string
+	PID          int
+	User         string
+	App          string
+	Database     string
+	ClientAddr   string
+	State        string
+	BackendStart time.Time // when this backend process started — unique with PID
 }
 
 // ServerInfo holds high-level PostgreSQL server metadata.
@@ -32,6 +33,7 @@ type DatabaseStats struct {
 type Query struct {
 	ResourceBase
 	Duration      time.Duration
+	QueryStart    time.Time // when this query started executing
 	WaitEventType string
 	WaitEvent     string
 	QueryText     string

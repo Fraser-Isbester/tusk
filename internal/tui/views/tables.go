@@ -44,7 +44,7 @@ func (v *Tables) ItemCount() int { v.mu.Lock(); defer v.mu.Unlock(); return len(
 // Start begins the periodic refresh loop.
 func (v *Tables) Start(app *tview.Application) {
 	v.done = make(chan struct{})
-	v.ticker = time.NewTicker(5 * time.Second)
+	v.ticker = time.NewTicker(30 * time.Second)
 	go func() {
 		v.refresh()
 		app.QueueUpdateDraw(func() { v.render() })

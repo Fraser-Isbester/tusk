@@ -5,32 +5,38 @@ import (
 	"time"
 )
 
-// QueryHistoryEntry records a query observed for a PID at a point in time.
+// QueryHistoryEntry records a query observed for a backend at a point in time.
 type QueryHistoryEntry struct {
 	Query     string
 	State     string
 	Timestamp time.Time
 }
 
-// QueryHistory tracks the sequence of queries observed per PID.
-// Each PID keeps a ring buffer of the last N distinct queries.
+// sessionKey uniquely identifies a backend session (PID can be recycled).
+type sessionKey struct {
+	PID          int
+	BackendStart time.Time
+}
+
+// QueryHistory tracks the sequence of queries observed per backend session.
+// Each session keeps a ring buffer of the last N distinct queries.
 type QueryHistory struct {
 	mu      sync.Mutex
-	history map[int][]QueryHistoryEntry
+	history map[sessionKey][]QueryHistoryEntry
 	maxSize int
 }
 
 // NewQueryHistory creates a new query history tracker.
-func NewQueryHistory(maxPerPID int) *QueryHistory {
+func NewQueryHistory(maxPerSession int) *QueryHistory {
 	return &QueryHistory{
-		history: make(map[int][]QueryHistoryEntry),
-		maxSize: maxPerPID,
+		history: make(map[sessionKey][]QueryHistoryEntry),
+		maxSize: maxPerSession,
 	}
 }
 
-// Record adds a query observation for a PID. Only records if the query
-// text differs from the last recorded entry (avoids duplicates from polling).
-func (h *QueryHistory) Record(pid int, query, state string) {
+// Record adds a query observation for a backend session.
+// Only records if the query text differs from the last recorded entry.
+func (h *QueryHistory) Record(pid int, backendStart time.Time, query, state string) {
 	if query == "" {
 		return
 	}
@@ -38,9 +44,9 @@ func (h *QueryHistory) Record(pid int, query, state string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	entries := h.history[pid]
+	key := sessionKey{PID: pid, BackendStart: backendStart}
+	entries := h.history[key]
 
-	// Skip if same as last entry
 	if len(entries) > 0 && entries[len(entries)-1].Query == query {
 		return
 	}
@@ -52,26 +58,24 @@ func (h *QueryHistory) Record(pid int, query, state string) {
 	}
 
 	entries = append(entries, entry)
-
-	// Ring buffer: keep only the last maxSize entries
 	if len(entries) > h.maxSize {
 		entries = entries[len(entries)-h.maxSize:]
 	}
 
-	h.history[pid] = entries
+	h.history[key] = entries
 }
 
-// Get returns the query history for a PID (oldest first).
-func (h *QueryHistory) Get(pid int) []QueryHistoryEntry {
+// Get returns the query history for a backend session (oldest first).
+func (h *QueryHistory) Get(pid int, backendStart time.Time) []QueryHistoryEntry {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	entries := h.history[pid]
+	key := sessionKey{PID: pid, BackendStart: backendStart}
+	entries := h.history[key]
 	if len(entries) == 0 {
 		return nil
 	}
 
-	// Return a copy
 	result := make([]QueryHistoryEntry, len(entries))
 	copy(result, entries)
 	return result
@@ -80,25 +84,25 @@ func (h *QueryHistory) Get(pid int) []QueryHistoryEntry {
 // RecordAll records observations from a slice of active queries.
 func (h *QueryHistory) RecordAll(queries []Query) {
 	for _, q := range queries {
-		h.Record(q.PID, q.QueryText, q.State)
+		h.Record(q.PID, q.BackendStart, q.QueryText, q.State)
 	}
 }
 
 // RecordTransactions records observations from a slice of transactions.
 func (h *QueryHistory) RecordTransactions(txns []Transaction) {
 	for _, t := range txns {
-		h.Record(t.PID, t.QueryText, t.State)
+		h.Record(t.PID, t.BackendStart, t.QueryText, t.State)
 	}
 }
 
-// Cleanup removes entries for PIDs that are no longer active.
-func (h *QueryHistory) Cleanup(activePIDs map[int]bool) {
+// Cleanup removes entries for sessions that are no longer active.
+func (h *QueryHistory) Cleanup(activeKeys map[sessionKey]bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	for pid := range h.history {
-		if !activePIDs[pid] {
-			delete(h.history, pid)
+	for key := range h.history {
+		if !activeKeys[key] {
+			delete(h.history, key)
 		}
 	}
 }
