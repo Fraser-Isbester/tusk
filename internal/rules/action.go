@@ -35,7 +35,7 @@ func (a *CancelAction) Name() string { return "cancel" }
 type LogAction struct{}
 
 func (a *LogAction) Execute(_ context.Context, _ *db.DB, pid int) error {
-	log.Printf("[rules] breach on PID %d", pid)
+	log.Printf("[rules] violation on PID %d", pid)
 	return nil
 }
 

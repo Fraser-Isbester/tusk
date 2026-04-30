@@ -114,13 +114,14 @@ func countStatements(query string) int {
 	return count
 }
 
-// breachIcon returns a short indicator for the breach action status.
-func breachIcon(b rules.Breach) string {
-	if b.Error != "" {
+// violationIcon returns a short indicator for the violation status.
+func violationIcon(v rules.Violation) string {
+	last := v.LastEvent()
+	switch last.Kind {
+	case rules.EventError:
 		return "[E]"
-	}
-	if b.Actioned {
-		switch b.Action {
+	case rules.EventSent:
+		switch v.ActionName {
 		case "terminate":
 			return "[T]"
 		case "cancel":
@@ -128,17 +129,21 @@ func breachIcon(b rules.Breach) string {
 		default:
 			return "[L]"
 		}
+	case rules.EventClosed:
+		return "[-]"
+	default:
+		return "[!]"
 	}
-	return "[!]"
 }
 
-// breachColor returns the color for a breach indicator cell.
-func breachColor(pids map[int]rules.Breach, pid int) tcell.Color {
-	b, ok := pids[pid]
+// violationColor returns the color for a violation indicator cell.
+func violationColor(pids map[int]rules.Violation, pid int) tcell.Color {
+	v, ok := pids[pid]
 	if !ok {
 		return theme.ColorFg
 	}
-	if b.Actioned {
+	last := v.LastEvent()
+	if last.Kind == rules.EventSent || last.Kind == rules.EventError {
 		return theme.ColorRed
 	}
 	return theme.ColorYellow

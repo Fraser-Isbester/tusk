@@ -12,22 +12,22 @@ import (
 	"github.com/rivo/tview"
 )
 
-// Breaches is the breach history view.
-type Breaches struct {
+// Violations is the violation history view.
+type Violations struct {
 	table      *tview.Table
 	engine     *rules.Engine
 	ruleFilter string
-	visible    []rules.Breach
-	onSelect   func(rules.Breach)
+	visible    []rules.Violation
+	onSelect   func(rules.Violation)
 	mu         sync.Mutex
 	ticker     *time.Ticker
 	done       chan struct{}
 }
 
-// NewBreachesView creates a new Breaches view.
-func NewBreachesView(engine *rules.Engine) *Breaches {
-	v := &Breaches{
-		table: tview.NewTable().SetSelectable(true, false).SetFixed(1, 0).SetSelectedStyle(theme.SelectedStyle),
+// NewViolationsView creates a new Violations view.
+func NewViolationsView(engine *rules.Engine) *Violations {
+	v := &Violations{
+		table:  tview.NewTable().SetSelectable(true, false).SetFixed(1, 0).SetSelectedStyle(theme.SelectedStyle),
 		engine: engine,
 	}
 	v.table.SetBackgroundColor(tcell.ColorDefault)
@@ -36,54 +36,47 @@ func NewBreachesView(engine *rules.Engine) *Breaches {
 }
 
 // Table returns the underlying tview.Table.
-func (v *Breaches) Table() *tview.Table { return v.table }
+func (v *Violations) Table() *tview.Table { return v.table }
 
-// ItemCount returns the number of recent breaches.
-func (v *Breaches) ItemCount() int {
+// ItemCount returns the number of recent violations.
+func (v *Violations) ItemCount() int {
 	if v.engine == nil {
 		return 0
 	}
-	return len(v.engine.RecentBreaches())
+	return len(v.engine.RecentViolations())
 }
 
-// SetOnSelect sets a callback invoked when Enter is pressed on a breach row.
-func (v *Breaches) SetOnSelect(fn func(rules.Breach)) {
+// SetOnSelect sets a callback invoked when Enter is pressed on a violation row.
+func (v *Violations) SetOnSelect(fn func(rules.Violation)) {
 	v.onSelect = fn
 	v.table.SetSelectedFunc(func(row, col int) {
-		if b, ok := v.SelectedBreach(); ok && v.onSelect != nil {
-			v.onSelect(b)
+		if viol, ok := v.SelectedViolation(); ok && v.onSelect != nil {
+			v.onSelect(viol)
 		}
 	})
 }
 
-// SetRuleFilter restricts the view to breaches from a specific rule.
-func (v *Breaches) SetRuleFilter(name string) {
-	v.mu.Lock()
-	v.ruleFilter = name
-	v.mu.Unlock()
-}
-
-// SelectedBreach returns the breach at the currently selected row.
-func (v *Breaches) SelectedBreach() (rules.Breach, bool) {
+// SelectedViolation returns the violation at the currently selected row.
+func (v *Violations) SelectedViolation() (rules.Violation, bool) {
 	row, _ := v.table.GetSelection()
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	idx := row - 1
 	if idx < 0 || idx >= len(v.visible) {
-		return rules.Breach{}, false
+		return rules.Violation{}, false
 	}
 	return v.visible[idx], true
 }
 
-// SetFilter filters breaches by rule name (substring match).
-func (v *Breaches) SetFilter(text string) {
+// SetFilter filters violations by rule name (substring match).
+func (v *Violations) SetFilter(text string) {
 	v.mu.Lock()
 	v.ruleFilter = text
 	v.mu.Unlock()
 }
 
 // Start begins the periodic refresh loop.
-func (v *Breaches) Start(app *tview.Application) {
+func (v *Violations) Start(app *tview.Application) {
 	v.done = make(chan struct{})
 	v.ticker = time.NewTicker(2 * time.Second)
 	go func() {
@@ -100,7 +93,7 @@ func (v *Breaches) Start(app *tview.Application) {
 }
 
 // Stop stops the periodic refresh loop.
-func (v *Breaches) Stop() {
+func (v *Violations) Stop() {
 	if v.ticker != nil {
 		v.ticker.Stop()
 	}
@@ -109,14 +102,14 @@ func (v *Breaches) Stop() {
 	}
 }
 
-func (v *Breaches) render() {
+func (v *Violations) render() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 
 	sel, _ := v.table.GetSelection()
 	v.table.Clear()
 
-	headers := []string{"TIME", "RULE", "PID", "EXPRESSION", "ACTION", "STATUS"}
+	headers := []string{"TIME", "RULE", "PID", "EXPRESSION", "ACTION", "STATUS", "EVENTS"}
 	for col, h := range headers {
 		cell := tview.NewTableCell(h).
 			SetTextColor(theme.ColorTableHeader).
@@ -134,62 +127,64 @@ func (v *Breaches) render() {
 		return
 	}
 
-	allBreaches := v.engine.RecentBreaches()
+	all := v.engine.RecentViolations()
 
-	// Apply rule filter
 	v.visible = v.visible[:0]
-	for _, b := range allBreaches {
-		if v.ruleFilter != "" && !strings.Contains(strings.ToLower(b.RuleName), strings.ToLower(v.ruleFilter)) {
+	for _, viol := range all {
+		if v.ruleFilter != "" && !strings.Contains(strings.ToLower(viol.RuleName), strings.ToLower(v.ruleFilter)) {
 			continue
 		}
-		v.visible = append(v.visible, b)
+		v.visible = append(v.visible, viol)
 	}
 
 	if len(v.visible) == 0 {
-		msg := "No breaches recorded"
+		msg := "No violations recorded"
 		if v.ruleFilter != "" {
-			msg = fmt.Sprintf("No breaches for rule %q", v.ruleFilter)
+			msg = fmt.Sprintf("No violations for %q", v.ruleFilter)
 		}
 		v.table.SetCell(1, 0, tview.NewTableCell(msg).
 			SetTextColor(theme.ColorDim).SetSelectable(false))
 		return
 	}
-	for i, b := range v.visible {
+
+	for i, viol := range v.visible {
 		row := i + 1
-		ts := b.Timestamp.Format("15:04:05")
+		ts := viol.CreatedAt().Format("15:04:05")
 
-		status := "dry-run"
+		lastEvt := viol.LastEvent()
+		status := string(lastEvt.Kind)
 		statusColor := theme.ColorDim
-		if b.Error != "" {
-			status = "error"
-			statusColor = theme.ColorRed
-		} else if b.Actioned {
-			status = "fired"
-			statusColor = theme.ColorRed
-		} else if !b.Actioned {
-			status = "cooldown"
+		switch lastEvt.Kind {
+		case rules.EventDetected:
 			statusColor = theme.ColorYellow
-		}
-
-		// Override for completed (target PID gone)
-		rowColor := theme.ColorFg
-		if !b.Active {
-			status = "completed"
+		case rules.EventAction:
+			statusColor = theme.ColorLabel
+		case rules.EventSent:
+			statusColor = theme.ColorRed
+		case rules.EventError:
+			statusColor = theme.ColorRed
+		case rules.EventClosed:
 			statusColor = theme.ColorDim
-			rowColor = theme.ColorDim
 		}
 
-		expr := b.Expression
+		rowColor := theme.ColorFg
+		if !viol.Active {
+			rowColor = theme.ColorDim
+			statusColor = theme.ColorDim
+		}
+
+		expr := viol.Expression
 		if len(expr) > 60 {
 			expr = expr[:57] + "..."
 		}
 
 		v.table.SetCell(row, 0, tview.NewTableCell(ts).SetTextColor(theme.ColorDim))
-		v.table.SetCell(row, 1, tview.NewTableCell(b.RuleName).SetTextColor(rowColor))
-		v.table.SetCell(row, 2, tview.NewTableCell(fmt.Sprintf("%d", b.PID)).SetTextColor(rowColor))
+		v.table.SetCell(row, 1, tview.NewTableCell(viol.RuleName).SetTextColor(rowColor))
+		v.table.SetCell(row, 2, tview.NewTableCell(fmt.Sprintf("%d", viol.PID)).SetTextColor(rowColor))
 		v.table.SetCell(row, 3, tview.NewTableCell(expr).SetTextColor(theme.ColorDim).SetExpansion(1))
-		v.table.SetCell(row, 4, tview.NewTableCell(b.Action).SetTextColor(rowColor))
+		v.table.SetCell(row, 4, tview.NewTableCell(viol.ActionName).SetTextColor(rowColor))
 		v.table.SetCell(row, 5, tview.NewTableCell(status).SetTextColor(statusColor))
+		v.table.SetCell(row, 6, tview.NewTableCell(fmt.Sprintf("%d", len(viol.Events))).SetTextColor(rowColor))
 	}
 
 	if sel > 0 && sel < v.table.GetRowCount() {

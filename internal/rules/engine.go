@@ -17,30 +17,28 @@ type Snapshot struct {
 	Locks        []db.Lock
 }
 
-// Engine evaluates rules against snapshots and manages breach history.
+// Engine evaluates rules against snapshots and manages violation history.
 type Engine struct {
-	rules    []Rule
-	database *db.DB
-	breaches *BreachStore
-	mu       sync.RWMutex
+	rules      []Rule
+	database   *db.DB
+	violations *ViolationStore
+	mu         sync.RWMutex
 }
 
 // NewEngine creates a new rules engine.
-func NewEngine(rules []Rule, database *db.DB, breachTTL time.Duration, maxBreaches int) *Engine {
+func NewEngine(rules []Rule, database *db.DB, violationTTL time.Duration, maxViolations int) *Engine {
 	return &Engine{
-		rules:    rules,
-		database: database,
-		breaches: NewBreachStore(breachTTL, maxBreaches),
+		rules:      rules,
+		database:   database,
+		violations: NewViolationStore(violationTTL, maxViolations),
 	}
 }
 
-// Evaluate runs all rules against the snapshot. Returns breaches from this tick.
-func (e *Engine) Evaluate(ctx context.Context, snap Snapshot) []Breach {
+// Evaluate runs all rules against the snapshot.
+func (e *Engine) Evaluate(ctx context.Context, snap Snapshot) {
 	e.mu.RLock()
 	rules := e.rules
 	e.mu.RUnlock()
-
-	var tickBreaches []Breach
 
 	for i := range rules {
 		rule := &rules[i]
@@ -52,35 +50,37 @@ func (e *Engine) Evaluate(ctx context.Context, snap Snapshot) []Breach {
 		case ResourceQuery:
 			for _, q := range snap.Queries {
 				activation := queryActivation(q)
-				if b, ok := e.evaluate(ctx, rule, activation, q.PID); ok {
-					qCopy := q
-					b.QuerySnap = &qCopy
-					tickBreaches = append(tickBreaches, b)
+				if matched, _, _ := rule.Program.Eval(activation); matched != nil {
+					if b, ok := matched.Value().(bool); ok && b {
+						qCopy := q
+						e.recordViolation(ctx, rule, q.PID, &qCopy, nil, nil)
+					}
 				}
 			}
 		case ResourceTransaction:
 			for _, t := range snap.Transactions {
 				activation := transactionActivation(t)
-				if b, ok := e.evaluate(ctx, rule, activation, t.PID); ok {
-					tCopy := t
-					b.TransactionSnap = &tCopy
-					tickBreaches = append(tickBreaches, b)
+				if matched, _, _ := rule.Program.Eval(activation); matched != nil {
+					if b, ok := matched.Value().(bool); ok && b {
+						tCopy := t
+						e.recordViolation(ctx, rule, t.PID, nil, &tCopy, nil)
+					}
 				}
 			}
 		case ResourceLock:
 			for _, l := range snap.Locks {
 				activation := lockActivation(l)
-				if b, ok := e.evaluate(ctx, rule, activation, l.BlockedPID); ok {
-					lCopy := l
-					b.LockSnap = &lCopy
-					tickBreaches = append(tickBreaches, b)
+				if matched, _, _ := rule.Program.Eval(activation); matched != nil {
+					if b, ok := matched.Value().(bool); ok && b {
+						lCopy := l
+						e.recordViolation(ctx, rule, l.BlockedPID, nil, nil, &lCopy)
+					}
 				}
 			}
 		}
 	}
 
-	// Build set of all active PIDs from the snapshot so we can mark
-	// which breaches are still active vs completed.
+	// Mark violations as active/closed based on current snapshot PIDs.
 	activePIDs := make(map[int]bool, len(snap.Queries)+len(snap.Transactions)+len(snap.Locks))
 	for _, q := range snap.Queries {
 		activePIDs[q.PID] = true
@@ -92,55 +92,83 @@ func (e *Engine) Evaluate(ctx context.Context, snap Snapshot) []Breach {
 		activePIDs[l.BlockedPID] = true
 		activePIDs[l.BlockingPID] = true
 	}
-	e.breaches.MarkActive(activePIDs)
-
-	e.breaches.Prune()
-	return tickBreaches
+	e.violations.MarkActive(activePIDs)
+	e.violations.Prune()
 }
 
-func (e *Engine) evaluate(ctx context.Context, rule *Rule, activation map[string]any, pid int) (Breach, bool) {
-	out, _, err := rule.Program.Eval(activation)
-	if err != nil {
-		return Breach{}, false
+func (e *Engine) recordViolation(ctx context.Context, rule *Rule, pid int, qSnap *db.Query, tSnap *db.Transaction, lSnap *db.Lock) {
+	now := time.Now()
+
+	v := Violation{
+		RuleName:        rule.Name,
+		ResourceType:    rule.Resource,
+		PID:             pid,
+		Expression:      rule.Expression,
+		ActionName:      rule.Action.Name(),
+		Active:          true,
+		DryRun:          rule.DryRun,
+		QuerySnap:       qSnap,
+		TransactionSnap: tSnap,
+		LockSnap:        lSnap,
+		Events: []ViolationEvent{
+			{Time: now, Kind: EventDetected, Message: fmt.Sprintf("PID %d matched rule %q", pid, rule.Name)},
+		},
 	}
 
-	breached, ok := out.Value().(bool)
-	if !ok || !breached {
-		return Breach{}, false
+	existing, shouldAct := e.violations.RecordOrUpdate(v, rule.Cooldown)
+
+	if !shouldAct {
+		// In cooldown — no action events to append
+		return
 	}
 
-	breach := Breach{
-		RuleName:     rule.Name,
-		ResourceType: rule.Resource,
-		PID:          pid,
-		Resource:     fmt.Sprintf("pid=%d", pid),
-		Expression:   rule.Expression,
-		Action:       rule.Action.Name(),
-		Timestamp:    time.Now(),
-		Active:       true,
+	dryRunStr := ""
+	if rule.DryRun {
+		dryRunStr = " dry-run=true"
+	}
+	existing.Events = append(existing.Events, ViolationEvent{
+		Time:    time.Now(),
+		Kind:    EventAction,
+		Message: fmt.Sprintf("triggering action `%s`%s", rule.Action.Name(), dryRunStr),
+	})
+
+	if rule.DryRun {
+		return
 	}
 
-	shouldAct := e.breaches.Record(breach, rule.Cooldown)
-	if shouldAct && !rule.DryRun {
-		if err := rule.Action.Execute(ctx, e.database, pid); err != nil {
-			breach.Error = err.Error()
-			log.Printf("[rules] action %s failed for PID %d: %v", rule.Action.Name(), pid, err)
-		} else {
-			breach.Actioned = true
-		}
+	// Execute the action
+	if err := rule.Action.Execute(ctx, e.database, pid); err != nil {
+		existing.Events = append(existing.Events, ViolationEvent{
+			Time:    time.Now(),
+			Kind:    EventError,
+			Message: fmt.Sprintf("action failed: %s", err.Error()),
+		})
+		log.Printf("[rules] action %s failed for PID %d: %v", rule.Action.Name(), pid, err)
+	} else {
+		existing.Events = append(existing.Events, ViolationEvent{
+			Time:    time.Now(),
+			Kind:    EventSent,
+			Message: fmt.Sprintf("executed %s on PID %d", rule.Action.Name(), pid),
+		})
 	}
 
-	return breach, true
+	if rule.Cooldown > 0 {
+		existing.Events = append(existing.Events, ViolationEvent{
+			Time:    time.Now(),
+			Kind:    EventCooldown,
+			Message: fmt.Sprintf("cooldown %s", rule.Cooldown),
+		})
+	}
 }
 
-// RecentBreaches returns breach history within TTL, newest first.
-func (e *Engine) RecentBreaches() []Breach {
-	return e.breaches.Recent()
+// RecentViolations returns violation history within TTL, newest first.
+func (e *Engine) RecentViolations() []Violation {
+	return e.violations.Recent()
 }
 
-// BreachedPIDs returns a map of PIDs currently in breach.
-func (e *Engine) BreachedPIDs() map[int]Breach {
-	return e.breaches.BreachedPIDs()
+// ViolatedPIDs returns a map of PIDs currently in active violation.
+func (e *Engine) ViolatedPIDs() map[int]Violation {
+	return e.violations.ViolatedPIDs()
 }
 
 // Rules returns a snapshot of the configured rules.

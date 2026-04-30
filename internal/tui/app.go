@@ -66,6 +66,8 @@ type App struct {
 
 	engine       *rules.Engine
 
+	connUser string
+
 	promptActive bool
 	promptMode   string
 	tuskColorIdx int // cycles for tusk color animation
@@ -73,13 +75,14 @@ type App struct {
 	filterText   string
 }
 
-func NewApp(database *db.DB, profileName, profileColor string, readonly bool, engine *rules.Engine) *App {
+func NewApp(database *db.DB, profileName, profileColor, connUser string, readonly bool, engine *rules.Engine) *App {
 	a := &App{
 		app:      tview.NewApplication(),
 		db:       database,
 		profile:  profileName,
 		color:    profileColor,
 		readonly: readonly,
+		connUser: connUser,
 		engine:   engine,
 		viewMap:      make(map[string]View),
 		registry:     NewCommandRegistry(),
@@ -102,7 +105,7 @@ func (a *App) buildLayout() {
 		SetTextAlign(tview.AlignLeft)
 	a.header.SetBackgroundColor(tcell.ColorDefault)
 
-	a.viewOrder = []string{"queries", "transactions", "connections", "tables", "locks", "indexes", "slow", "db", "roles", "rules", "breaches"}
+	a.viewOrder = []string{"queries", "transactions", "connections", "tables", "locks", "indexes", "slow", "db", "rules", "violations"}
 
 	a.tabBar = tview.NewTextView().
 		SetDynamicColors(true).
@@ -165,12 +168,11 @@ func (a *App) registerViews() {
 	a.viewMap["connections"] = views.NewConnectionsView(a.db)
 	a.viewMap["tables"] = views.NewTablesView(a.db)
 	a.viewMap["db"] = views.NewDatabasesView(a.db)
-	a.viewMap["roles"] = views.NewRolesView(a.db)
 	a.viewMap["slow"] = views.NewSlowQueriesView(a.db)
 	a.viewMap["locks"] = views.NewLocksView(a.db)
 	a.viewMap["indexes"] = views.NewIndexesView(a.db)
 	a.viewMap["rules"] = views.NewRulesView(a.engine)
-	a.viewMap["breaches"] = views.NewBreachesView(a.engine)
+	a.viewMap["violations"] = views.NewViolationsView(a.engine)
 
 	for name, v := range a.viewMap {
 		a.pages.AddPage(name, v.Table(), true, false)
@@ -418,6 +420,7 @@ func (a *App) updateHeader() {
 		"",
 		fmt.Sprintf(" %sTusk[-]      %s%s[-]", c, v, a.serverVersion),
 		fmt.Sprintf(" %sProfile:[-] %s%s[-]", l, v, a.profile),
+		fmt.Sprintf(" %sUser:[-]    %s%s[-]", l, v, a.connUser),
 		fmt.Sprintf(" %sUptime:[-]  %s%s[-]", l, v, uptimeStr),
 		fmt.Sprintf(" %sConns:[-]   %s (max: %d)", l, connParts, a.connMax),
 		fmt.Sprintf(" %sCache:[-]   %s   %sTPS:[-] %s%s[-]", l, cacheStr, l, v, tpsStr),
@@ -633,16 +636,6 @@ func (a *App) wireNavigation() {
 		})
 	}
 
-	// Roles: Enter -> switch to queries view with role filter
-	if rv, ok := a.viewMap["roles"].(*views.Roles); ok {
-		rv.Table().SetSelectedFunc(func(row, col int) {
-			if role, ok := rv.SelectedRole(); ok {
-				a.switchView("queries")
-				a.applyFilter(role)
-			}
-		})
-	}
-
 	// Transactions: Enter -> Query Detail
 	if tv, ok := a.viewMap["transactions"].(*views.Transactions); ok {
 		tv.Table().SetSelectedFunc(func(row, col int) {
@@ -673,19 +666,19 @@ func (a *App) wireNavigation() {
 		})
 	}
 
-	// Rules: Enter -> switch to breaches view with rule name filter
+	// Rules: Enter -> switch to violations view with rule name filter
 	if rv, ok := a.viewMap["rules"].(*views.Rules); ok {
 		rv.Table().SetSelectedFunc(func(row, col int) {
 			if name, ok := rv.SelectedRule(); ok {
-				a.switchView("breaches")
+				a.switchView("violations")
 				a.applyFilter(name)
 			}
 		})
 	}
 
-	// Breaches: Enter -> Resource detail for the breached PID
-	if bv, ok := a.viewMap["breaches"].(*views.Breaches); ok {
-		bv.SetOnSelect(func(b rules.Breach) { a.showBreachDetail(b) })
+	// Violations: Enter -> Resource detail for the violated PID
+	if vv, ok := a.viewMap["violations"].(*views.Violations); ok {
+		vv.SetOnSelect(func(v rules.Violation) { a.showViolationDetail(v) })
 	}
 
 	// Tables: Enter -> Table Detail
@@ -708,32 +701,29 @@ func (a *App) showDetail(name string, detail tview.Primitive) {
 	a.updateStatus()
 }
 
-func (a *App) showBreachDetail(b rules.Breach) {
+func (a *App) showViolationDetail(v rules.Violation) {
 	ctx := context.Background()
-	switch b.ResourceType {
+	switch v.ResourceType {
 	case rules.ResourceQuery:
-		// Try live data first, fall back to snapshot
 		if queries, err := a.db.GetActiveQueries(ctx); err == nil {
 			for _, q := range queries {
-				if q.PID == b.PID {
+				if q.PID == v.PID {
 					detail := views.NewQueryDetailView(q, a.db, nil, a.app, a.engine)
-					a.showDetail("breach-query-detail", detail)
+					a.showDetail("violation-query-detail", detail)
 					return
 				}
 			}
 		}
-		if b.QuerySnap != nil {
-			q := *b.QuerySnap
-			if q.State != "completed" {
-				q.State = "completed"
-			}
+		if v.QuerySnap != nil {
+			q := *v.QuerySnap
+			q.State = "completed"
 			detail := views.NewQueryDetailView(q, a.db, nil, a.app, a.engine)
-			a.showDetail("breach-query-detail", detail)
+			a.showDetail("violation-query-detail", detail)
 		}
 	case rules.ResourceTransaction:
 		if txns, err := a.db.GetTransactions(ctx); err == nil {
 			for _, t := range txns {
-				if t.PID == b.PID {
+				if t.PID == v.PID {
 					q := db.Query{
 						ResourceBase: db.ResourceBase{
 							PID: t.PID, User: t.User, App: t.App, State: t.State,
@@ -741,13 +731,13 @@ func (a *App) showBreachDetail(b rules.Breach) {
 						Duration: t.QueryDuration, QueryText: t.QueryText,
 					}
 					detail := views.NewQueryDetailView(q, a.db, a.queryHistory, a.app, a.engine)
-					a.showDetail("breach-txn-detail", detail)
+					a.showDetail("violation-txn-detail", detail)
 					return
 				}
 			}
 		}
-		if b.TransactionSnap != nil {
-			t := *b.TransactionSnap
+		if v.TransactionSnap != nil {
+			t := *v.TransactionSnap
 			q := db.Query{
 				ResourceBase: db.ResourceBase{
 					PID: t.PID, User: t.User, App: t.App, State: "completed",
@@ -755,21 +745,21 @@ func (a *App) showBreachDetail(b rules.Breach) {
 				Duration: t.QueryDuration, QueryText: t.QueryText,
 			}
 			detail := views.NewQueryDetailView(q, a.db, a.queryHistory, a.app, a.engine)
-			a.showDetail("breach-txn-detail", detail)
+			a.showDetail("violation-txn-detail", detail)
 		}
 	case rules.ResourceLock:
 		if locks, err := a.db.GetLocks(ctx); err == nil {
 			for _, l := range locks {
-				if l.BlockedPID == b.PID {
+				if l.BlockedPID == v.PID {
 					detail := views.NewLockDetailView(l, a.db)
-					a.showDetail("breach-lock-detail", detail)
+					a.showDetail("violation-lock-detail", detail)
 					return
 				}
 			}
 		}
-		if b.LockSnap != nil {
-			detail := views.NewLockDetailView(*b.LockSnap, a.db)
-			a.showDetail("breach-lock-detail", detail)
+		if v.LockSnap != nil {
+			detail := views.NewLockDetailView(*v.LockSnap, a.db)
+			a.showDetail("violation-lock-detail", detail)
 		}
 	}
 }

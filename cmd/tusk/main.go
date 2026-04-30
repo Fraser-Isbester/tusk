@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
@@ -30,6 +31,7 @@ func main() {
 			var connStr string
 			var profileName string
 			var profileColor string
+			var connUser string
 			var readonly bool
 			var ruleConfigs []rules.RuleConfig
 
@@ -47,6 +49,7 @@ func main() {
 					profileName = cfg.DefaultProfile
 				}
 				profileColor = profile.Color
+				connUser = profile.User
 				readonly = profile.Readonly
 				ruleConfigs = profile.Rules
 			}
@@ -57,6 +60,14 @@ func main() {
 			}
 			defer database.Close()
 
+			// Query actual connection user if not set from profile
+			if connUser == "" {
+				var user string
+				if err := database.Pool().QueryRow(context.Background(), "SELECT current_user").Scan(&user); err == nil {
+					connUser = user
+				}
+			}
+
 			var engine *rules.Engine
 			if len(ruleConfigs) > 0 {
 				compiled, err := rules.BuildRules(ruleConfigs, readonly)
@@ -66,7 +77,7 @@ func main() {
 				engine = rules.NewEngine(compiled, database, 5*time.Minute, 1000)
 			}
 
-			app := tui.NewApp(database, profileName, profileColor, readonly, engine)
+			app := tui.NewApp(database, profileName, profileColor, connUser, readonly, engine)
 			if err := app.Run(); err != nil {
 				return fmt.Errorf("running tusk: %w", err)
 			}
