@@ -55,6 +55,19 @@ task check          # run vet + fmt check + tests
 ./tusk '<dsn>'      # run with a direct connection string
 ```
 
+## CI requirements — MUST run before every push
+
+Before pushing any branch or opening a PR, always run these checks locally and fix all issues:
+
+```bash
+go build ./...          # must compile
+gofmt -l .              # must produce no output (all files formatted)
+golangci-lint run ./... # must report 0 issues
+go test ./...           # must pass
+```
+
+Never push code that hasn't passed these checks. CI runs golangci-lint v2 with gofmt, goimports, and gosec enabled.
+
 ## Dependencies
 
 - `rivo/tview` + `gdamore/tcell` — TUI framework

@@ -78,14 +78,14 @@ type App struct {
 
 func NewApp(database *db.DB, cfg *config.Config, profileName, profileColor, connUser string, readonly bool, engine *rules.Engine) *App {
 	a := &App{
-		app:      tview.NewApplication(),
-		db:       database,
-		profile:  profileName,
-		color:    profileColor,
-		readonly: readonly,
-		config:   cfg,
-		connUser: connUser,
-		engine:   engine,
+		app:          tview.NewApplication(),
+		db:           database,
+		profile:      profileName,
+		color:        profileColor,
+		readonly:     readonly,
+		config:       cfg,
+		connUser:     connUser,
+		engine:       engine,
 		viewMap:      make(map[string]View),
 		registry:     NewCommandRegistry(),
 		queryHistory: db.NewQueryHistory(50),

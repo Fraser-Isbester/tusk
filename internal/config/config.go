@@ -188,11 +188,11 @@ func (c *Config) Save() error {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
 	return os.Rename(tmp, path)

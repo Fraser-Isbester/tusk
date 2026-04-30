@@ -5,11 +5,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fraser-isbester/tusk/internal/rules"
-	"github.com/fraser-isbester/tusk/internal/tui/theme"
 	"github.com/gdamore/tcell/v2"
 	"github.com/google/cel-go/cel"
 	"github.com/rivo/tview"
+
+	"github.com/fraser-isbester/tusk/internal/rules"
+	"github.com/fraser-isbester/tusk/internal/tui/theme"
 )
 
 // celVars returns the variable names available for a given resource type.
