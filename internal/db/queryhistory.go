@@ -89,9 +89,10 @@ func (h *QueryHistory) RecordAll(queries []Query) {
 }
 
 // RecordTransactions records observations from a slice of transactions.
+// Uses XactStart as the session key so each transaction gets its own history.
 func (h *QueryHistory) RecordTransactions(txns []Transaction) {
 	for _, t := range txns {
-		h.Record(t.PID, t.BackendStart, t.QueryText, t.State)
+		h.Record(t.PID, t.XactStart, t.QueryText, t.State)
 	}
 }
 
