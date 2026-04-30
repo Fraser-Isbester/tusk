@@ -10,6 +10,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+
 	"github.com/fraser-isbester/tusk/internal/db"
 	"github.com/fraser-isbester/tusk/internal/rules"
 	"github.com/fraser-isbester/tusk/internal/tui/theme"
@@ -271,7 +272,7 @@ func (v *Queries) render() {
 
 		qhash := ""
 		if q.QueryID != 0 {
-			qhash = fmt.Sprintf("%x", uint64(q.QueryID))
+			qhash = fmt.Sprintf("%x", uint64(q.QueryID)) //nolint:gosec // display-only hex truncation
 			if len(qhash) > 8 {
 				qhash = qhash[:8]
 			}
@@ -334,7 +335,7 @@ func (v *Queries) render() {
 
 		qhash := ""
 		if q.QueryID != 0 {
-			qhash = fmt.Sprintf("%x", uint64(q.QueryID))
+			qhash = fmt.Sprintf("%x", uint64(q.QueryID)) //nolint:gosec // display-only hex truncation
 			if len(qhash) > 8 {
 				qhash = qhash[:8]
 			}

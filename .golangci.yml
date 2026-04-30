@@ -12,6 +12,9 @@ linters:
     - unconvert
     - unparam
     - prealloc
+  settings:
+    misspell:
+      locale: US
 
 formatters:
   enable:
@@ -22,11 +25,6 @@ formatters:
       local-prefixes:
         - github.com/fraser-isbester/tusk
 
-linters-settings:
-  misspell:
-    locale: US
-
 issues:
-  exclude-use-default: false
   max-issues-per-linter: 0
   max-same-issues: 0

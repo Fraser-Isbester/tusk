@@ -343,9 +343,9 @@ func NewQueryDetailView(q db.Query, dbConn *db.DB, history *db.QueryHistory, app
 				err := dbConn.CancelQuery(context.Background(), pid)
 				app.QueueUpdateDraw(func() {
 					if err != nil {
-						statusMsg = fmt.Sprintf("[#FF5F5F]Error cancelling PID %d: %s[-]", pid, err.Error())
+						statusMsg = fmt.Sprintf("[#FF5F5F]Error canceling PID %d: %s[-]", pid, err.Error())
 					} else {
-						statusMsg = fmt.Sprintf("[#00D700]Cancelled PID %d[-]", pid)
+						statusMsg = fmt.Sprintf("[#00D700]Canceled PID %d[-]", pid)
 					}
 					renderAll(q)
 				})

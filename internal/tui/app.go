@@ -48,8 +48,8 @@ type App struct {
 	viewMap      map[string]View
 	activeView   string
 	queryHistory *db.QueryHistory
-	viewStack  []string
-	registry   *CommandRegistry
+	viewStack    []string
+	registry     *CommandRegistry
 
 	mu            sync.Mutex
 	serverVersion string
@@ -64,26 +64,25 @@ type App struct {
 	prevXactTotal int64
 	prevTime      time.Time
 
-	engine       *rules.Engine
+	engine *rules.Engine
 
 	connUser string
 
 	promptActive bool
 	promptMode   string
-	tuskColorIdx int // cycles for tusk color animation
 	filterActive bool
 	filterText   string
 }
 
 func NewApp(database *db.DB, profileName, profileColor, connUser string, readonly bool, engine *rules.Engine) *App {
 	a := &App{
-		app:      tview.NewApplication(),
-		db:       database,
-		profile:  profileName,
-		color:    profileColor,
-		readonly: readonly,
-		connUser: connUser,
-		engine:   engine,
+		app:          tview.NewApplication(),
+		db:           database,
+		profile:      profileName,
+		color:        profileColor,
+		readonly:     readonly,
+		connUser:     connUser,
+		engine:       engine,
 		viewMap:      make(map[string]View),
 		registry:     NewCommandRegistry(),
 		queryHistory: db.NewQueryHistory(50),
@@ -512,7 +511,7 @@ func (a *App) updateTabBar() {
 		if _, ok := a.viewMap[name]; !ok {
 			continue
 		}
-		label := name
+		var label string
 		if name == parent {
 			count := 0
 			if v, ok := a.viewMap[name]; ok {
@@ -544,7 +543,7 @@ func (a *App) updateStatus() {
 		hints = append(hints, hint{"t", "terminate"})
 	}
 
-	var parts []string
+	parts := make([]string, 0, len(hints))
 	for _, h := range hints {
 		parts = append(parts, fmt.Sprintf("[#00D7FF]<%s>[-][#808080]%s[-]", h.key, h.label))
 	}

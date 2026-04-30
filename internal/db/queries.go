@@ -556,7 +556,7 @@ func (d *DB) GetIndexes(ctx context.Context) ([]IndexInfo, error) {
 func (d *DB) CancelQuery(ctx context.Context, pid int) error {
 	var ok bool
 	if err := d.pool.QueryRow(ctx, queryCancelBackend, pid).Scan(&ok); err != nil {
-		return fmt.Errorf("cancelling query for pid %d: %w", pid, err)
+		return fmt.Errorf("canceling query for pid %d: %w", pid, err)
 	}
 	if !ok {
 		return fmt.Errorf("pg_cancel_backend(%d) returned false", pid)
