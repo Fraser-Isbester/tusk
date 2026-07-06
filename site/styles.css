@@ -1,0 +1,440 @@
+/* Tusk branding site — terminal aesthetic matching the TUI theme
+   (see internal/tui/theme/theme.go) */
+
+:root {
+  --cyan: #00d7ff; /* primary accent / logo */
+  --orange: #d78700; /* secondary accent / labels */
+  --green: #00d700;
+  --yellow: #ffd700;
+  --red: #ff5f5f;
+  --blue: #005faf;
+  --blue-bright: #0087af;
+
+  --bg: #0a0a0a;
+  --panel: #141414;
+  --panel-2: #1c1c1c;
+  --header-bg: #303030;
+  --border: #2a2a2a;
+  --fg: #d0d0d0;
+  --fg-bright: #ffffff;
+  --dim: #585858;
+
+  --mono: ui-monospace, "JetBrains Mono", "SF Mono", "Menlo", "Cascadia Code",
+    "Consolas", monospace;
+  --maxw: 1040px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 15px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+a {
+  color: var(--cyan);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* subtle terminal scanline / grid backdrop */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(
+    1200px 600px at 50% -10%,
+    rgba(0, 215, 255, 0.06),
+    transparent 70%
+  );
+}
+
+/* ---------- Nav ---------- */
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1.25rem;
+  background: rgba(10, 10, 10, 0.85);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+.nav-brand {
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--cyan);
+  text-transform: lowercase;
+}
+.nav-brand::before {
+  content: "> ";
+  color: var(--orange);
+}
+.nav-links {
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+}
+.nav-links a {
+  color: var(--fg);
+}
+.nav-links a:hover,
+.nav-links a.active {
+  color: var(--cyan);
+  text-decoration: none;
+}
+
+/* ---------- Layout ---------- */
+main {
+  position: relative;
+  z-index: 1;
+}
+.wrap {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 0 1.25rem;
+}
+section {
+  padding: 3.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+h1,
+h2,
+h3 {
+  color: var(--fg-bright);
+  line-height: 1.25;
+}
+h2 {
+  font-size: 1.6rem;
+  margin-top: 0;
+}
+h2::before {
+  content: "# ";
+  color: var(--orange);
+}
+.muted {
+  color: var(--dim);
+}
+.accent {
+  color: var(--cyan);
+}
+
+/* ---------- Hero ---------- */
+.hero {
+  text-align: center;
+  padding: 4rem 1.25rem 3.5rem;
+}
+.hero .logo {
+  color: var(--cyan);
+  font-size: clamp(0.5rem, 2.1vw, 1rem);
+  line-height: 1.1;
+  margin: 0 auto 1.5rem;
+  display: inline-block;
+  text-align: left;
+  text-shadow: 0 0 18px rgba(0, 215, 255, 0.35);
+  white-space: pre;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.hero .tagline {
+  font-size: clamp(1.1rem, 2.6vw, 1.5rem);
+  color: var(--fg-bright);
+  margin: 0.5rem auto 0.75rem;
+  max-width: 40ch;
+}
+.hero .sub {
+  color: var(--dim);
+  max-width: 60ch;
+  margin: 0 auto 1.75rem;
+}
+
+/* ---------- Buttons ---------- */
+.btn-row {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 1.5rem;
+}
+.btn {
+  display: inline-block;
+  padding: 0.6rem 1.2rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  background: var(--panel);
+  font-weight: 600;
+  transition: all 0.15s ease;
+}
+.btn:hover {
+  text-decoration: none;
+  border-color: var(--cyan);
+  color: var(--cyan);
+  box-shadow: 0 0 0 1px var(--cyan);
+}
+.btn-primary {
+  background: var(--cyan);
+  color: #001217;
+  border-color: var(--cyan);
+}
+.btn-primary:hover {
+  background: #4ce4ff;
+  color: #001217;
+  box-shadow: 0 0 22px rgba(0, 215, 255, 0.45);
+}
+
+/* ---------- Code ---------- */
+code {
+  font-family: var(--mono);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.1em 0.4em;
+  color: var(--cyan);
+  font-size: 0.9em;
+}
+pre {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem 1.15rem;
+  overflow-x: auto;
+  position: relative;
+}
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--fg);
+}
+.terminal {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel);
+  max-width: 640px;
+  margin: 0 auto;
+  text-align: left;
+}
+.terminal-bar {
+  background: var(--header-bg);
+  padding: 0.5rem 0.75rem;
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+.dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.dot.r {
+  background: var(--red);
+}
+.dot.y {
+  background: var(--yellow);
+}
+.dot.g {
+  background: var(--green);
+}
+.terminal pre {
+  border: none;
+  border-radius: 0;
+  margin: 0;
+}
+.terminal .prompt {
+  color: var(--orange);
+}
+
+/* ---------- Feature grid ---------- */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+  margin-top: 1.75rem;
+}
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1.25rem;
+  transition: border-color 0.15s ease;
+}
+.card:hover {
+  border-color: var(--blue-bright);
+}
+.card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+  color: var(--cyan);
+}
+.card h3 .tag {
+  color: var(--orange);
+  margin-right: 0.4rem;
+}
+.card p {
+  margin: 0;
+  color: var(--fg);
+}
+
+/* ---------- Screenshots ---------- */
+.shot {
+  margin: 2rem auto 0;
+  max-width: 900px;
+}
+.shot img {
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+.shot figcaption {
+  text-align: center;
+  color: var(--dim);
+  margin-top: 0.6rem;
+  font-size: 0.85rem;
+}
+
+/* ---------- Tables ---------- */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1.25rem 0;
+  font-size: 0.9rem;
+}
+th,
+td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+th {
+  color: var(--orange);
+  border-bottom: 1px solid var(--blue);
+}
+tr:hover td {
+  background: var(--panel);
+}
+
+/* ---------- Footer ---------- */
+.footer {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  padding: 2.5rem 1.25rem;
+  color: var(--dim);
+  font-size: 0.85rem;
+}
+.footer a {
+  color: var(--dim);
+}
+.footer a:hover {
+  color: var(--cyan);
+}
+
+/* ---------- Generated documentation page ---------- */
+.docs {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 2rem;
+  align-items: start;
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+}
+.docs-nav {
+  position: sticky;
+  top: 68px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 1rem;
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+}
+.docs-nav h4 {
+  margin: 0 0 0.6rem;
+  color: var(--orange);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.docs-nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.docs-nav li {
+  margin: 0.2rem 0;
+}
+.docs-nav a {
+  color: var(--fg);
+  font-size: 0.85rem;
+  word-break: break-word;
+}
+.docs-nav a:hover {
+  color: var(--cyan);
+}
+.docs-content {
+  min-width: 0;
+}
+.docs-content .pkg {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 2rem;
+  margin-bottom: 2rem;
+}
+.docs-content .pkg-path {
+  color: var(--dim);
+  font-size: 0.85rem;
+  margin: 0 0 0.25rem;
+}
+.docs-content h2 {
+  scroll-margin-top: 80px;
+}
+.docs-content h3 {
+  color: var(--cyan);
+  scroll-margin-top: 80px;
+  border-top: 1px solid var(--border);
+  padding-top: 1.25rem;
+  margin-top: 1.5rem;
+}
+.decl {
+  font-size: 0.85rem;
+  margin: 0.5rem 0 0.75rem;
+}
+.docs-empty {
+  color: var(--dim);
+  font-style: italic;
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 780px) {
+  .docs {
+    grid-template-columns: 1fr;
+  }
+  .docs-nav {
+    position: static;
+    max-height: none;
+  }
+}

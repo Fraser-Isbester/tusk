@@ -39,6 +39,11 @@ dist/
 # env file
 .env
 
+# Branding site: generated docs (produced by site/tools/gendocs in CI) and the
+# locally-built generator binary
+site/documentation.html
+site/tools/gendocs/gendocs
+
 # Editor/IDE
 # .idea/
 # .vscode/

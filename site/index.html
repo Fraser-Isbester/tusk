@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tusk — real-time PostgreSQL monitoring in your terminal</title>
+    <meta
+      name="description"
+      content="Tusk is a k9s-style terminal UI for real-time PostgreSQL monitoring and management. Live views, a CEL rules engine, and auto-remediation."
+    />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="nav">
+      <a class="nav-brand" href="./index.html">tusk</a>
+      <nav class="nav-links">
+        <a href="./index.html" class="active">Home</a>
+        <a href="./features.html">Features</a>
+        <a href="./documentation.html">Docs</a>
+        <a href="https://github.com/Fraser-Isbester/tusk">GitHub&nbsp;↗</a>
+      </nav>
+    </header>
+
+    <main>
+      <!-- Hero -->
+      <div class="hero">
+        <pre class="logo" aria-label="Tusk">
+ _______ _     _ _______ _     _
+    |    |     | |______ |____/
+    |    |_____| ______| |    \_</pre
+        >
+        <p class="tagline">Real-time PostgreSQL monitoring in your terminal.</p>
+        <p class="sub">
+          A k9s-style terminal UI for observing and acting on live database
+          activity. Not a database client — a tool for watching what your
+          Postgres is <em>actually doing</em>, and stepping in when it misbehaves.
+        </p>
+
+        <div class="terminal">
+          <div class="terminal-bar">
+            <span class="dot r"></span><span class="dot y"></span
+            ><span class="dot g"></span>
+          </div>
+          <pre><code><span class="prompt">$</span> go install github.com/fraser-isbester/tusk/cmd/tusk@latest
+<span class="prompt">$</span> tusk 'postgres://user:pass@localhost:5432/mydb'</code></pre>
+        </div>
+
+        <div class="btn-row">
+          <a class="btn btn-primary" href="./documentation.html">Read the docs</a>
+          <a class="btn" href="https://github.com/Fraser-Isbester/tusk"
+            >View on GitHub</a
+          >
+          <a
+            class="btn"
+            href="https://github.com/Fraser-Isbester/tusk/releases"
+            >Download binaries</a
+          >
+        </div>
+      </div>
+
+      <!-- What is Tusk -->
+      <section>
+        <div class="wrap">
+          <h2>What is Tusk?</h2>
+          <p>
+            Tusk connects to a live PostgreSQL instance and gives you
+            auto-refreshing views of what's happening right now — queries,
+            transactions, sessions, locks, tables, and indexes. On top of that,
+            a <span class="accent">CEL-based rules engine</span> lets you define
+            policies that evaluate against live state and can automatically
+            terminate, cancel, or log offending activity.
+          </p>
+          <figure class="shot">
+            <img
+              src="./assets/tusk-queries-view.png"
+              alt="Tusk queries view showing live query activity"
+              loading="lazy"
+            />
+            <figcaption>Live queries view with 2s auto-refresh.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <!-- Feature highlights -->
+      <section>
+        <div class="wrap">
+          <h2>Highlights</h2>
+          <div class="grid">
+            <div class="card">
+              <h3><span class="tag">01</span>Live views</h3>
+              <p>
+                Queries, transactions, sessions, locks, tables, and indexes —
+                all refreshing every 2 seconds.
+              </p>
+            </div>
+            <div class="card">
+              <h3><span class="tag">02</span>Rules engine</h3>
+              <p>
+                Define policy rules in YAML using
+                <a href="https://cel.dev/">CEL</a> expressions evaluated against
+                live database state.
+              </p>
+            </div>
+            <div class="card">
+              <h3><span class="tag">03</span>Auto remediation</h3>
+              <p>
+                Automatically <code>terminate</code>, <code>cancel</code>, or
+                <code>log</code> on rule violations — with dry-run and read-only
+                safety.
+              </p>
+            </div>
+            <div class="card">
+              <h3><span class="tag">04</span>Violation tracking</h3>
+              <p>
+                Audit log of violations with a timestamped lifecycle: detected →
+                action → cooldown → closed.
+              </p>
+            </div>
+            <div class="card">
+              <h3><span class="tag">05</span>Split-pane detail</h3>
+              <p>
+                Formatted SQL, transaction query history, and lock
+                blocker/blocked shown side-by-side.
+              </p>
+            </div>
+            <div class="card">
+              <h3><span class="tag">06</span>Fast navigation</h3>
+              <p>
+                Tab through views, sort any column with Shift+letter, and filter
+                instantly with <code>/</code>.
+              </p>
+            </div>
+          </div>
+          <div class="btn-row" style="margin-top: 2rem">
+            <a class="btn btn-primary" href="./features.html"
+              >Explore all features</a
+            >
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Tusk — MIT Licensed · © 2026 Fraser Isbester</p>
+      <p>
+        <a href="https://github.com/Fraser-Isbester/tusk"
+          >github.com/Fraser-Isbester/tusk</a
+        >
+      </p>
+    </footer>
+  </body>
+</html>

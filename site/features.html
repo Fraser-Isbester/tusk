@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Features — Tusk</title>
+    <meta
+      name="description"
+      content="Everything Tusk does: live views, a CEL rules engine, violation tracking, auto-remediation, split-pane detail views, and fast keyboard navigation."
+    />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="nav">
+      <a class="nav-brand" href="./index.html">tusk</a>
+      <nav class="nav-links">
+        <a href="./index.html">Home</a>
+        <a href="./features.html" class="active">Features</a>
+        <a href="./documentation.html">Docs</a>
+        <a href="https://github.com/Fraser-Isbester/tusk">GitHub&nbsp;↗</a>
+      </nav>
+    </header>
+
+    <main>
+      <section>
+        <div class="wrap">
+          <h2>Features</h2>
+          <p class="muted">
+            Tusk observes and acts on live PostgreSQL activity. Here's the full
+            picture.
+          </p>
+
+          <div class="grid">
+            <div class="card">
+              <h3>Live views</h3>
+              <p>
+                Queries, transactions, sessions, locks, tables, indexes, rules,
+                and violations — all with 2-second auto-refresh so you're always
+                looking at current state.
+              </p>
+            </div>
+            <div class="card">
+              <h3>CEL rules engine</h3>
+              <p>
+                Define policy rules in YAML using
+                <a href="https://cel.dev/">Common Expression Language</a>. Rules
+                evaluate continuously against live query, transaction, and lock
+                state.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Violation tracking</h3>
+              <p>
+                A full audit log of rule violations with a timestamped event
+                lifecycle: <code>detected → action → cooldown → closed</code>.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Auto remediation</h3>
+              <p>
+                Automatically take action on violations —
+                <code>terminate</code>, <code>cancel</code>, or
+                <code>log</code> — governed by per-rule cooldowns, dry-run mode,
+                and a profile-level read-only guard.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Split-pane detail views</h3>
+              <p>
+                Query detail with formatted SQL, transaction detail with query
+                history, and lock detail with blocker/blocked side-by-side.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Interactive Activity pane</h3>
+              <p>
+                Shows lock contention and rule violations per PID. Press
+                <code>Enter</code> on a blocking PID to jump straight to its
+                detail.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Column sorting &amp; filtering</h3>
+              <p>
+                Toggle sort on any column with <code>Shift+letter</code>, and
+                filter any view with <code>/</code> — the filter persists
+                visually until cleared with <code>Esc</code>.
+              </p>
+            </div>
+            <div class="card">
+              <h3>Keyboard-first navigation</h3>
+              <p>
+                Arrow keys cycle views, <code>Tab</code> cycles panes within
+                detail views, and a <code>:</code> command prompt jumps anywhere.
+              </p>
+            </div>
+          </div>
+
+          <figure class="shot">
+            <img
+              src="./assets/tusk-tx-detail.png"
+              alt="Tusk transaction detail split-pane view"
+              loading="lazy"
+            />
+            <figcaption>
+              Transaction detail with query history in a split pane.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <!-- Views -->
+      <section>
+        <div class="wrap">
+          <h2>Views</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Command</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>:queries</code></td>
+                <td>Active queries with duration, wait events, blocking info</td>
+              </tr>
+              <tr>
+                <td><code>:transactions</code></td>
+                <td>Active transactions sorted by age with lock counts</td>
+              </tr>
+              <tr>
+                <td><code>:sessions</code></td>
+                <td>Connections grouped by user, app, state</td>
+              </tr>
+              <tr>
+                <td><code>:tables</code></td>
+                <td>Table sizes, row counts, dead tuple %, vacuum stats</td>
+              </tr>
+              <tr>
+                <td><code>:locks</code></td>
+                <td>Blocked/blocking lock pairs</td>
+              </tr>
+              <tr>
+                <td><code>:indexes</code></td>
+                <td>Index scan counts and sizes</td>
+              </tr>
+              <tr>
+                <td><code>:rules</code></td>
+                <td>Configured rules with violation counts</td>
+              </tr>
+              <tr>
+                <td><code>:violations</code></td>
+                <td>Violation audit log with event timeline</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Rules example -->
+      <section>
+        <div class="wrap">
+          <h2>Rules by example</h2>
+          <p>
+            Rules live in <code>~/.config/tusk/config.yaml</code> under a
+            profile. Each rule is a CEL <code>when</code> expression plus an
+            action.
+          </p>
+          <pre><code>profiles:
+  dev:
+    url: "postgres://postgres:postgres@localhost:5432/mydb?sslmode=disable"
+    rules:
+      - name: kill-idle-in-txn
+        resource: transaction
+        when: "state == 'idle in transaction' &amp;&amp; xact_duration > duration('5m')"
+        action: terminate
+        cooldown: 5m
+        dry_run: true
+
+      - name: long-queries
+        resource: query
+        when: "state == 'active' &amp;&amp; duration > duration('30s')"
+        action: cancel
+        cooldown: 1m
+        dry_run: true</code></pre>
+
+          <h3 style="color: var(--fg-bright)">Rule fields</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Field</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>resource</code></td>
+                <td><code>query</code>, <code>transaction</code>, or <code>lock</code></td>
+              </tr>
+              <tr>
+                <td><code>when</code></td>
+                <td>CEL expression evaluated against the resource fields</td>
+              </tr>
+              <tr>
+                <td><code>action</code></td>
+                <td><code>terminate</code>, <code>cancel</code>, or <code>log</code></td>
+              </tr>
+              <tr>
+                <td><code>cooldown</code></td>
+                <td>Minimum interval between action firings per PID</td>
+              </tr>
+              <tr>
+                <td><code>dry_run</code></td>
+                <td>Record violations but don't execute the action</td>
+              </tr>
+              <tr>
+                <td><code>readonly</code></td>
+                <td>Profile-level: forces all rules to dry-run</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="muted">
+            For the CEL field reference and full configuration, see the
+            <a href="./documentation.html">generated documentation</a> and the
+            <a href="https://github.com/Fraser-Isbester/tusk#configuration"
+              >project README</a
+            >.
+          </p>
+        </div>
+      </section>
+
+      <!-- Key bindings -->
+      <section>
+        <div class="wrap">
+          <h2>Key bindings</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Key</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><code>← →</code></td><td>Switch views</td></tr>
+              <tr><td><code>:</code></td><td>Command prompt</td></tr>
+              <tr><td><code>/</code></td><td>Filter</td></tr>
+              <tr><td><code>Tab</code></td><td>Cycle panes in detail view</td></tr>
+              <tr><td><code>Enter</code></td><td>Drill into detail / fire action</td></tr>
+              <tr><td><code>Esc</code></td><td>Back / clear filter</td></tr>
+              <tr><td><code>Shift+letter</code></td><td>Sort by column</td></tr>
+              <tr><td><code>c</code></td><td>Cancel query (in query detail)</td></tr>
+              <tr><td><code>t</code></td><td>Terminate backend (in query/transaction detail)</td></tr>
+              <tr><td><code>q</code></td><td>Quit</td></tr>
+            </tbody>
+          </table>
+          <div class="btn-row" style="margin-top: 2rem">
+            <a class="btn btn-primary" href="./documentation.html"
+              >Browse the API docs</a
+            >
+            <a class="btn" href="https://github.com/Fraser-Isbester/tusk"
+              >Get started on GitHub</a
+            >
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Tusk — MIT Licensed · © 2026 Fraser Isbester</p>
+      <p>
+        <a href="https://github.com/Fraser-Isbester/tusk"
+          >github.com/Fraser-Isbester/tusk</a
+        >
+      </p>
+    </footer>
+  </body>
+</html>
