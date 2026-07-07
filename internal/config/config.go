@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"net/url"
 	"os"
@@ -182,4 +183,129 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// SaveProfileRules writes ruleConfigs back to the given profile in
+// ~/.config/tusk/config.yaml, replacing only that profile's `rules:` sequence.
+//
+// It edits the file's YAML node tree in place rather than re-marshaling the
+// whole Config, so comments, key ordering, and every other field (other
+// profiles, connection URLs, env-derived values) are preserved untouched.
+// Because only the rules subtree is rewritten, defaults injected by
+// applyProfileDefaults (port, refresh_interval) and env-derived passwords are
+// never persisted. The write is atomic (temp file + rename).
+func SaveProfileRules(profileName string, ruleConfigs []rules.RuleConfig) error {
+	path, err := configPath()
+	if err != nil {
+		return err
+	}
+
+	// Load the existing document (preserving comments/formatting), or start a
+	// fresh one if the file does not exist yet.
+	root := &yaml.Node{Kind: yaml.MappingNode}
+	if data, readErr := os.ReadFile(path); readErr == nil { //nolint:gosec // path from configPath(), not user input
+		var doc yaml.Node
+		if parseErr := yaml.Unmarshal(data, &doc); parseErr != nil {
+			return fmt.Errorf("parsing config %s: %w", path, parseErr)
+		}
+		if len(doc.Content) > 0 && doc.Content[0].Kind == yaml.MappingNode {
+			root = doc.Content[0]
+		}
+	} else if !os.IsNotExist(readErr) {
+		return fmt.Errorf("reading config %s: %w", path, readErr)
+	}
+
+	// profiles:
+	profiles := mapValue(root, "profiles")
+	if profiles == nil || profiles.Kind != yaml.MappingNode {
+		profiles = &yaml.Node{Kind: yaml.MappingNode}
+		setMapValue(root, "profiles", profiles)
+	}
+
+	// profiles.<name>:
+	profile := mapValue(profiles, profileName)
+	if profile == nil || profile.Kind != yaml.MappingNode {
+		profile = &yaml.Node{Kind: yaml.MappingNode}
+		setMapValue(profiles, profileName, profile)
+	}
+
+	// profiles.<name>.rules:  (marshal the configs to a fresh sequence node)
+	rulesNode, err := toNode(ruleConfigs)
+	if err != nil {
+		return fmt.Errorf("encoding rules: %w", err)
+	}
+	setMapValue(profile, "rules", rulesNode)
+
+	// default_profile: fill in for a freshly created file so it round-trips.
+	if mapValue(root, "default_profile") == nil {
+		setMapValue(root, "default_profile", &yaml.Node{
+			Kind: yaml.ScalarNode, Tag: "!!str", Value: profileName,
+		})
+	}
+
+	// Encode with 2-space indent to match the documented config style and keep
+	// diffs minimal (yaml.Marshal defaults to 4).
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(root); err != nil {
+		return fmt.Errorf("marshaling config: %w", err)
+	}
+	_ = enc.Close()
+	out := buf.Bytes()
+
+	dir := filepath.Dir(path)
+	if mkErr := os.MkdirAll(dir, 0o750); mkErr != nil {
+		return fmt.Errorf("creating config dir: %w", mkErr)
+	}
+	tmp := path + ".tmp"
+	if writeErr := os.WriteFile(tmp, out, 0o600); writeErr != nil {
+		return fmt.Errorf("writing config: %w", writeErr)
+	}
+	return os.Rename(tmp, path)
+}
+
+// mapValue returns the value node for key in a mapping node, or nil if absent.
+// Mapping content alternates key, value, key, value, ...
+func mapValue(m *yaml.Node, key string) *yaml.Node {
+	if m == nil || m.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return m.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// setMapValue replaces the value for key in a mapping node, or appends the
+// key/value pair if the key is absent.
+func setMapValue(m *yaml.Node, key string, val *yaml.Node) {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			m.Content[i+1] = val
+			return
+		}
+	}
+	m.Content = append(m.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
+		val,
+	)
+}
+
+// toNode marshals v and returns its top-level node (unwrapping the document).
+func toNode(v any) (*yaml.Node, error) {
+	data, err := yaml.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	if len(doc.Content) == 0 {
+		return &yaml.Node{Kind: yaml.SequenceNode}, nil
+	}
+	return doc.Content[0], nil
 }

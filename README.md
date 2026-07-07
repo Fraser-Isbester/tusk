@@ -128,6 +128,10 @@ profiles:
 | `Shift+letter` | Sort by column |
 | `c` | Cancel query (in query detail) |
 | `t` | Terminate backend (in query/transaction detail) |
+| `n` | New rule (in rules view) |
+| `e` | Edit selected rule (in rules view) |
+| `d` | Delete selected rule (in rules view) |
+| `Space` | Toggle rule enabled/disabled (in rules view) |
 | `q` | Quit |
 
 ## Development

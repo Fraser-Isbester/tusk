@@ -77,7 +77,7 @@ func main() {
 				engine = rules.NewEngine(compiled, database, 5*time.Minute, 1000)
 			}
 
-			app := tui.NewApp(database, profileName, profileColor, connUser, readonly, engine)
+			app := tui.NewApp(database, cfg, profileName, profileColor, connUser, readonly, engine)
 			if err := app.Run(); err != nil {
 				return fmt.Errorf("running tusk: %w", err)
 			}

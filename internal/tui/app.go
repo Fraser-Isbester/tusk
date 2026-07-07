@@ -10,6 +10,7 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 
+	"github.com/fraser-isbester/tusk/internal/config"
 	"github.com/fraser-isbester/tusk/internal/db"
 	"github.com/fraser-isbester/tusk/internal/rules"
 	"github.com/fraser-isbester/tusk/internal/tui/theme"
@@ -32,6 +33,7 @@ type App struct {
 	profile  string
 	color    string
 	readonly bool
+	config   *config.Config
 
 	layout    *tview.Flex
 	header    *tview.TextView
@@ -74,13 +76,14 @@ type App struct {
 	filterText   string
 }
 
-func NewApp(database *db.DB, profileName, profileColor, connUser string, readonly bool, engine *rules.Engine) *App {
+func NewApp(database *db.DB, cfg *config.Config, profileName, profileColor, connUser string, readonly bool, engine *rules.Engine) *App {
 	a := &App{
 		app:          tview.NewApplication(),
 		db:           database,
 		profile:      profileName,
 		color:        profileColor,
 		readonly:     readonly,
+		config:       cfg,
 		connUser:     connUser,
 		engine:       engine,
 		viewMap:      make(map[string]View),
@@ -500,6 +503,9 @@ func (a *App) parentView() string {
 	if strings.HasPrefix(av, "table-detail") {
 		return "tables"
 	}
+	if strings.HasPrefix(av, "rule-form") || strings.HasPrefix(av, "delete-confirm") {
+		return "rules"
+	}
 	return av
 }
 
@@ -542,6 +548,8 @@ func (a *App) updateStatus() {
 		hints = append(hints, hint{"c", "cancel"}, hint{"t", "terminate"})
 	case "locks":
 		hints = append(hints, hint{"t", "terminate"})
+	case "rules":
+		hints = append(hints, hint{"n", "new"}, hint{"e", "edit"}, hint{"d", "delete"}, hint{"space", "toggle"})
 	}
 
 	parts := make([]string, 0, len(hints))
@@ -686,13 +694,39 @@ func (a *App) wireNavigation() {
 		})
 	}
 
-	// Rules: Enter -> switch to violations view with rule name filter
+	// Rules: Enter -> violations filtered by rule; n/e/d/space -> manage rules.
 	if rv, ok := a.viewMap["rules"].(*views.Rules); ok {
-		rv.Table().SetSelectedFunc(func(row, col int) {
+		rv.Table().SetSelectedFunc(func(_, _ int) {
 			if name, ok := rv.SelectedRule(); ok {
 				a.switchView("violations")
 				a.applyFilter(name)
 			}
+		})
+		rv.Table().SetInputCapture(func(evt *tcell.EventKey) *tcell.EventKey {
+			if evt.Key() != tcell.KeyRune {
+				return evt
+			}
+			switch evt.Rune() {
+			case 'n':
+				a.showRuleForm(nil)
+				return nil
+			case 'e':
+				if r, ok := a.selectedRuleConfig(rv); ok {
+					a.showRuleForm(&r)
+				}
+				return nil
+			case 'd':
+				if name, ok := rv.SelectedRule(); ok {
+					a.showDeleteConfirm(name)
+				}
+				return nil
+			case ' ':
+				if name, ok := rv.SelectedRule(); ok {
+					a.toggleRule(name)
+				}
+				return nil
+			}
+			return evt
 		})
 	}
 
@@ -747,6 +781,12 @@ func (a *App) showHelp() {
 		fmt.Sprintf("    %sc%s      %sCancel query (pg_cancel_backend)%s", k, r, d, r),
 		fmt.Sprintf("    %st%s      %sTerminate backend (pg_terminate_backend)%s", k, r, d, r),
 		"",
+		h + "  Rules View" + r,
+		fmt.Sprintf("    %sn%s      %sNew rule%s", k, r, d, r),
+		fmt.Sprintf("    %se%s      %sEdit selected rule%s", k, r, d, r),
+		fmt.Sprintf("    %sd%s      %sDelete selected rule%s", k, r, d, r),
+		fmt.Sprintf("    %sSpace%s  %sToggle enabled/disabled%s", k, r, d, r),
+		"",
 		h + "  Sorting (in table views)" + r,
 		fmt.Sprintf("    %sShift+Column Key%s  %sSort by column (see column headers)%s", k, r, d, r),
 		"",
@@ -767,6 +807,231 @@ func (a *App) showHelp() {
 	modal.SetBackgroundColor(tcell.ColorDefault)
 
 	a.showDetail("help-detail", modal)
+}
+
+// rulesEditable reports whether the current session can edit rules — it needs
+// a loaded config and a real profile (the positional-URL path uses "cli", which
+// has no config-backed profile to persist to).
+func (a *App) rulesEditable() bool {
+	return a.config != nil && a.profile != "" && a.profile != "cli"
+}
+
+// selectedRuleConfig returns the RuleConfig backing the currently selected row
+// in the rules view, looked up from the config profile.
+func (a *App) selectedRuleConfig(rv *views.Rules) (rules.RuleConfig, bool) {
+	name, ok := rv.SelectedRule()
+	if !ok || a.config == nil {
+		return rules.RuleConfig{}, false
+	}
+	profile, err := a.config.ResolveProfile(a.profile)
+	if err != nil {
+		return rules.RuleConfig{}, false
+	}
+	for _, r := range profile.Rules {
+		if r.Name == name {
+			return r, true
+		}
+	}
+	return rules.RuleConfig{}, false
+}
+
+// showMessage displays a dismissable modal (used for errors and guards).
+func (a *App) showMessage(title, msg string) {
+	modal := tview.NewModal().
+		SetText(fmt.Sprintf("%s\n\n%s", title, msg)).
+		AddButtons([]string{"OK"}).
+		SetDoneFunc(func(_ int, _ string) { a.popDetail("message-detail") })
+	modal.SetBackgroundColor(tcell.ColorDefault)
+	a.showDetail("message-detail", modal)
+}
+
+// popDetail removes a detail/modal page and returns to the previous view,
+// mirroring the Esc handler's stack management.
+func (a *App) popDetail(name string) {
+	a.pages.RemovePage(name)
+	if len(a.viewStack) > 0 {
+		prev := a.viewStack[len(a.viewStack)-1]
+		a.viewStack = a.viewStack[:len(a.viewStack)-1]
+		a.activeView = prev
+		a.switchView(prev)
+	}
+}
+
+// showRuleForm opens the rule editor. existing is nil for a new rule.
+func (a *App) showRuleForm(existing *rules.RuleConfig) {
+	if !a.rulesEditable() {
+		a.showMessage("Editing unavailable",
+			"Rule editing requires a config profile.\nLaunch tusk with -P <profile> and a ~/.config/tusk/config.yaml.")
+		return
+	}
+	form := views.NewRuleForm(a.app, a.readonly, existing, func(cfg rules.RuleConfig) {
+		if a.saveRule(cfg, existing) {
+			a.popDetail("rule-form-detail")
+		}
+	}, func() {
+		a.popDetail("rule-form-detail")
+	})
+	a.showDetail("rule-form-detail", form)
+}
+
+// saveRule persists a new or edited rule and hot-swaps the engine. It returns
+// true on success; on failure it shows an error modal and leaves the form open.
+func (a *App) saveRule(cfg rules.RuleConfig, existing *rules.RuleConfig) bool {
+	profile, err := a.config.ResolveProfile(a.profile)
+	if err != nil {
+		a.showMessage("Error", err.Error())
+		return false
+	}
+
+	newRules := make([]rules.RuleConfig, len(profile.Rules))
+	copy(newRules, profile.Rules)
+
+	if existing == nil {
+		for _, r := range newRules {
+			if r.Name == cfg.Name {
+				a.showMessage("Duplicate rule", fmt.Sprintf("A rule named %q already exists.", cfg.Name))
+				return false
+			}
+		}
+		newRules = append(newRules, cfg)
+	} else {
+		// Reject a rename that collides with a different existing rule.
+		if cfg.Name != existing.Name {
+			for _, r := range newRules {
+				if r.Name == cfg.Name {
+					a.showMessage("Duplicate rule", fmt.Sprintf("A rule named %q already exists.", cfg.Name))
+					return false
+				}
+			}
+		}
+		found := false
+		for i, r := range newRules {
+			if r.Name == existing.Name {
+				newRules[i] = cfg
+				found = true
+				break
+			}
+		}
+		if !found {
+			newRules = append(newRules, cfg)
+		}
+	}
+
+	if err := config.SaveProfileRules(a.profile, newRules); err != nil {
+		a.showMessage("Save failed", err.Error())
+		return false
+	}
+	profile.Rules = newRules
+	a.config.Profiles[a.profile] = profile
+	a.recompileAndSwap()
+	return true
+}
+
+// deleteRule removes a rule by name, persists, and hot-swaps the engine.
+func (a *App) deleteRule(name string) {
+	if !a.rulesEditable() {
+		return
+	}
+	profile, err := a.config.ResolveProfile(a.profile)
+	if err != nil {
+		a.showMessage("Error", err.Error())
+		return
+	}
+	newRules := make([]rules.RuleConfig, 0, len(profile.Rules))
+	for _, r := range profile.Rules {
+		if r.Name != name {
+			newRules = append(newRules, r)
+		}
+	}
+	if err := config.SaveProfileRules(a.profile, newRules); err != nil {
+		a.showMessage("Save failed", err.Error())
+		return
+	}
+	profile.Rules = newRules
+	a.config.Profiles[a.profile] = profile
+	a.recompileAndSwap()
+}
+
+// toggleRule flips the enabled state of a rule by name, persists, and hot-swaps.
+func (a *App) toggleRule(name string) {
+	if !a.rulesEditable() {
+		a.showMessage("Editing unavailable",
+			"Rule editing requires a config profile.\nLaunch tusk with -P <profile> and a ~/.config/tusk/config.yaml.")
+		return
+	}
+	profile, err := a.config.ResolveProfile(a.profile)
+	if err != nil {
+		a.showMessage("Error", err.Error())
+		return
+	}
+	newRules := make([]rules.RuleConfig, len(profile.Rules))
+	copy(newRules, profile.Rules)
+	for i := range newRules {
+		if newRules[i].Name == name {
+			// Enabled defaults to true when unset.
+			cur := newRules[i].Enabled == nil || *newRules[i].Enabled
+			next := !cur
+			newRules[i].Enabled = &next
+			break
+		}
+	}
+	if err := config.SaveProfileRules(a.profile, newRules); err != nil {
+		a.showMessage("Save failed", err.Error())
+		return
+	}
+	profile.Rules = newRules
+	a.config.Profiles[a.profile] = profile
+	a.recompileAndSwap()
+}
+
+// recompileAndSwap rebuilds the engine's rules from the current config profile.
+// If no engine existed yet (profile previously had zero rules), it creates one
+// and wires it into the views that render engine state.
+func (a *App) recompileAndSwap() {
+	profile, err := a.config.ResolveProfile(a.profile)
+	if err != nil {
+		return
+	}
+	compiled, err := rules.BuildRules(profile.Rules, a.readonly)
+	if err != nil {
+		a.showMessage("Rule error", err.Error())
+		return
+	}
+	if a.engine == nil {
+		a.engine = rules.NewEngine(compiled, a.db, 5*time.Minute, 1000)
+		if qv, ok := a.viewMap["queries"].(*views.Queries); ok {
+			qv.SetEngine(a.engine)
+		}
+		if tv, ok := a.viewMap["transactions"].(*views.Transactions); ok {
+			tv.SetEngine(a.engine)
+		}
+		if rv, ok := a.viewMap["rules"].(*views.Rules); ok {
+			rv.SetEngine(a.engine)
+		}
+		if vv, ok := a.viewMap["violations"].(*views.Violations); ok {
+			vv.SetEngine(a.engine)
+		}
+		return
+	}
+	a.engine.UpdateRules(compiled)
+}
+
+// showDeleteConfirm asks for confirmation before deleting a rule.
+func (a *App) showDeleteConfirm(name string) {
+	if !a.rulesEditable() {
+		return
+	}
+	modal := tview.NewModal().
+		SetText(fmt.Sprintf("Delete rule '%s'?", name)).
+		AddButtons([]string{"Cancel", "Delete"}).
+		SetDoneFunc(func(_ int, label string) {
+			a.popDetail("delete-confirm-detail")
+			if label == "Delete" {
+				a.deleteRule(name)
+			}
+		})
+	modal.SetBackgroundColor(tcell.ColorDefault)
+	a.showDetail("delete-confirm-detail", modal)
 }
 
 func (a *App) showDetail(name string, detail tview.Primitive) {
