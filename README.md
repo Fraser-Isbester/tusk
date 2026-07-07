@@ -42,6 +42,46 @@ tusk 'postgres://user:pass@localhost:5432/mydb'
 tusk -P production
 ```
 
+## Daemon
+
+`tuskd` runs a profile's rules engine headlessly — the same rules, evaluation, and
+auto-remediation as the TUI, with no terminal UI. Use it to enforce rules continuously
+in the background (e.g. under systemd).
+
+**Install:**
+```bash
+go install github.com/fraser-isbester/tusk/cmd/tuskd@latest
+```
+(`tuskd` is also included in the [release archives](https://github.com/fraser-isbester/tusk/releases) alongside `tusk`.)
+
+**Run:**
+```bash
+# Evaluate the profile's rules every 2s (default)
+tuskd -P production
+
+# Custom polling interval
+tuskd -P production -i 5s
+```
+
+`tuskd` requires the selected profile to define at least one rule; it reads the same
+`~/.config/tusk/config.yaml` as `tusk`, honors `readonly`/`dry_run`, and shuts down
+cleanly on `SIGINT`/`SIGTERM`.
+
+**systemd unit** (`/etc/systemd/system/tuskd.service`):
+```ini
+[Unit]
+Description=Tusk rules daemon
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/tuskd -P production
+Restart=on-failure
+User=tusk
+
+[Install]
+WantedBy=multi-user.target
+```
+
 ## Configuration
 
 `~/.config/tusk/config.yaml`
