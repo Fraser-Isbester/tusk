@@ -35,6 +35,14 @@ func NewRulesView(engine *rules.Engine) *Rules {
 // Table returns the underlying tview.Table.
 func (v *Rules) Table() *tview.Table { return v.table }
 
+// SetEngine attaches (or replaces) the rules engine this view renders from.
+// Used when the engine is created lazily after the first rule is added.
+func (v *Rules) SetEngine(e *rules.Engine) {
+	v.mu.Lock()
+	v.engine = e
+	v.mu.Unlock()
+}
+
 // ItemCount returns the number of configured rules.
 func (v *Rules) ItemCount() int {
 	if v.engine == nil {
@@ -182,7 +190,11 @@ func (v *Rules) render() {
 		v.table.SetCell(row, 6, tview.NewTableCell(violStr).SetTextColor(violColor))
 	}
 
-	if sel > 0 && sel < v.table.GetRowCount() {
+	switch {
+	case sel > 0 && sel < v.table.GetRowCount():
 		v.table.Select(sel, 0)
+	case v.table.GetRowCount() > 1:
+		// Auto-select the first rule row so edit/delete/toggle work on entry.
+		v.table.Select(1, 0)
 	}
 }

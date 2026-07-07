@@ -39,6 +39,14 @@ func NewViolationsView(engine *rules.Engine) *Violations {
 // Table returns the underlying tview.Table.
 func (v *Violations) Table() *tview.Table { return v.table }
 
+// SetEngine attaches (or replaces) the rules engine this view renders from.
+// Used when the engine is created lazily after the first rule is added.
+func (v *Violations) SetEngine(e *rules.Engine) {
+	v.mu.Lock()
+	v.engine = e
+	v.mu.Unlock()
+}
+
 // ItemCount returns the number of recent violations.
 func (v *Violations) ItemCount() int {
 	if v.engine == nil {

@@ -7,15 +7,18 @@ import (
 	"github.com/google/cel-go/cel"
 )
 
-// RuleConfig is the YAML representation of a rule.
+// RuleConfig is the YAML representation of a rule. Optional fields use
+// omitempty so rules written back to disk (by the TUI editor) stay clean:
+// a nil Enabled, false DryRun, or empty Cooldown are omitted rather than
+// serialized as null/false/"".
 type RuleConfig struct {
 	Name     string `yaml:"name"`
-	Enabled  *bool  `yaml:"enabled"`
-	DryRun   bool   `yaml:"dry_run"`
+	Enabled  *bool  `yaml:"enabled,omitempty"`
+	DryRun   bool   `yaml:"dry_run,omitempty"`
 	Resource string `yaml:"resource"`
 	When     string `yaml:"when"`
 	Action   string `yaml:"action"`
-	Cooldown string `yaml:"cooldown"`
+	Cooldown string `yaml:"cooldown,omitempty"`
 }
 
 // BuildRules compiles rule configs into executable rules.
