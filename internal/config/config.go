@@ -20,29 +20,46 @@ type Config struct {
 	DefaultProfile string             `yaml:"default_profile"`
 }
 
-// Profile represents a single PostgreSQL connection profile.
+// Profile represents a single PostgreSQL connection profile. Optional fields
+// use omitempty so profiles written back to disk (by the setup screen) stay
+// clean and don't bake in defaults.
 type Profile struct {
-	Host            string             `yaml:"host"`
-	Port            int                `yaml:"port"`
-	User            string             `yaml:"user"`
-	Password        string             `yaml:"password"`
-	Database        string             `yaml:"database"`
-	SSLMode         string             `yaml:"sslmode"`
-	URL             string             `yaml:"url"`
-	Readonly        bool               `yaml:"readonly"`
-	Color           string             `yaml:"color"`
-	RefreshInterval time.Duration      `yaml:"refresh_interval"`
-	Rules           []rules.RuleConfig `yaml:"rules"`
+	Host            string             `yaml:"host,omitempty"`
+	Port            int                `yaml:"port,omitempty"`
+	User            string             `yaml:"user,omitempty"`
+	Password        string             `yaml:"password,omitempty"`
+	Database        string             `yaml:"database,omitempty"`
+	SSLMode         string             `yaml:"sslmode,omitempty"`
+	URL             string             `yaml:"url,omitempty"`
+	Readonly        bool               `yaml:"readonly,omitempty"`
+	Color           string             `yaml:"color,omitempty"`
+	RefreshInterval time.Duration      `yaml:"refresh_interval,omitempty"`
+	Connect         *ConnectConfig     `yaml:"connect,omitempty"`
+	Rules           []rules.RuleConfig `yaml:"rules,omitempty"`
+}
+
+// ConnectConfig describes how tusk should reach a database that isn't directly
+// accessible — e.g. a kubectl port-forward into a VPC. When Via is empty or
+// "direct", the profile's URL/fields are used as-is. For tunnel methods
+// (kube-port-forward, exec) the profile supplies credentials and database name
+// while the tunnel supplies the local host:port.
+type ConnectConfig struct {
+	Via        string   `yaml:"via,omitempty"`         // "" | direct | kube-port-forward | exec
+	Context    string   `yaml:"context,omitempty"`     // kube: kubeconfig context
+	Namespace  string   `yaml:"namespace,omitempty"`   // kube: namespace
+	Target     string   `yaml:"target,omitempty"`      // kube: svc/pod/deploy/statefulset
+	RemotePort int      `yaml:"remote_port,omitempty"` // kube: remote port (default 5432)
+	LocalPort  int      `yaml:"local_port,omitempty"`  // 0 = auto-pick a free port
+	Command    []string `yaml:"command,omitempty"`     // exec: argv, {local_port} substituted
 }
 
 // ConnectionString returns a PostgreSQL connection string for this profile.
 // If URL is set directly, it is returned as-is. Otherwise, the string is
-// assembled from the individual fields.
+// assembled from the individual fields using localhost/5432 defaults.
 func (p Profile) ConnectionString() string {
 	if p.URL != "" {
 		return p.URL
 	}
-
 	host := p.Host
 	if host == "" {
 		host = "localhost"
@@ -51,6 +68,13 @@ func (p Profile) ConnectionString() string {
 	if port == 0 {
 		port = 5432
 	}
+	return p.DSN(host, port)
+}
+
+// DSN builds a connection string against the given host and port using the
+// profile's credentials, database, and sslmode (ignoring Host/Port/URL). It is
+// used when a tunnel supplies the local endpoint.
+func (p Profile) DSN(host string, port int) string {
 	user := p.User
 	if user == "" {
 		user = "postgres"
@@ -63,7 +87,6 @@ func (p Profile) ConnectionString() string {
 	if sslmode == "" {
 		sslmode = "disable"
 	}
-
 	if p.Password != "" {
 		return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
 			url.PathEscape(user), url.PathEscape(p.Password), host, port, db, sslmode)
@@ -199,52 +222,84 @@ func SaveProfileRules(profileName string, ruleConfigs []rules.RuleConfig) error 
 	if err != nil {
 		return err
 	}
-
-	// Load the existing document (preserving comments/formatting), or start a
-	// fresh one if the file does not exist yet.
-	root := &yaml.Node{Kind: yaml.MappingNode}
-	if data, readErr := os.ReadFile(path); readErr == nil { //nolint:gosec // path from configPath(), not user input
-		var doc yaml.Node
-		if parseErr := yaml.Unmarshal(data, &doc); parseErr != nil {
-			return fmt.Errorf("parsing config %s: %w", path, parseErr)
-		}
-		if len(doc.Content) > 0 && doc.Content[0].Kind == yaml.MappingNode {
-			root = doc.Content[0]
-		}
-	} else if !os.IsNotExist(readErr) {
-		return fmt.Errorf("reading config %s: %w", path, readErr)
+	root, err := loadConfigRoot(path)
+	if err != nil {
+		return err
 	}
 
-	// profiles:
-	profiles := mapValue(root, "profiles")
-	if profiles == nil || profiles.Kind != yaml.MappingNode {
-		profiles = &yaml.Node{Kind: yaml.MappingNode}
-		setMapValue(root, "profiles", profiles)
-	}
-
-	// profiles.<name>:
+	profiles := ensureProfiles(root)
 	profile := mapValue(profiles, profileName)
 	if profile == nil || profile.Kind != yaml.MappingNode {
 		profile = &yaml.Node{Kind: yaml.MappingNode}
 		setMapValue(profiles, profileName, profile)
 	}
 
-	// profiles.<name>.rules:  (marshal the configs to a fresh sequence node)
 	rulesNode, err := toNode(ruleConfigs)
 	if err != nil {
 		return fmt.Errorf("encoding rules: %w", err)
 	}
 	setMapValue(profile, "rules", rulesNode)
+	ensureDefaultProfile(root, profileName)
 
-	// default_profile: fill in for a freshly created file so it round-trips.
-	if mapValue(root, "default_profile") == nil {
-		setMapValue(root, "default_profile", &yaml.Node{
-			Kind: yaml.ScalarNode, Tag: "!!str", Value: profileName,
-		})
+	return writeConfigRoot(path, root)
+}
+
+// SaveProfile writes p to profiles.<name> in ~/.config/tusk/config.yaml,
+// preserving comments and every other profile (same node-edit approach as
+// SaveProfileRules). An existing profile's rules: node is carried over when p
+// has no rules, so saving connection details from the setup screen never drops
+// rules a user added via the editor. The write is atomic.
+func SaveProfile(name string, p Profile) error {
+	path, err := configPath()
+	if err != nil {
+		return err
+	}
+	root, err := loadConfigRoot(path)
+	if err != nil {
+		return err
 	}
 
-	// Encode with 2-space indent to match the documented config style and keep
-	// diffs minimal (yaml.Marshal defaults to 4).
+	profiles := ensureProfiles(root)
+	profNode, err := toNode(p)
+	if err != nil {
+		return fmt.Errorf("encoding profile: %w", err)
+	}
+	// Preserve existing rules if we're only updating connection details.
+	if existing := mapValue(profiles, name); existing != nil && existing.Kind == yaml.MappingNode && len(p.Rules) == 0 {
+		if r := mapValue(existing, "rules"); r != nil {
+			setMapValue(profNode, "rules", r)
+		}
+	}
+	setMapValue(profiles, name, profNode)
+	ensureDefaultProfile(root, name)
+
+	return writeConfigRoot(path, root)
+}
+
+// loadConfigRoot reads the config file into its root mapping node (preserving
+// comments), or returns a fresh mapping node if the file does not exist.
+func loadConfigRoot(path string) (*yaml.Node, error) {
+	root := &yaml.Node{Kind: yaml.MappingNode}
+	data, err := os.ReadFile(path) //nolint:gosec // path from configPath(), not user input
+	if err != nil {
+		if os.IsNotExist(err) {
+			return root, nil
+		}
+		return nil, fmt.Errorf("reading config %s: %w", path, err)
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("parsing config %s: %w", path, err)
+	}
+	if len(doc.Content) > 0 && doc.Content[0].Kind == yaml.MappingNode {
+		root = doc.Content[0]
+	}
+	return root, nil
+}
+
+// writeConfigRoot atomically writes root to path with 2-space indent (matching
+// the documented config style and minimizing diffs).
+func writeConfigRoot(path string, root *yaml.Node) error {
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
@@ -252,17 +307,35 @@ func SaveProfileRules(profileName string, ruleConfigs []rules.RuleConfig) error 
 		return fmt.Errorf("marshaling config: %w", err)
 	}
 	_ = enc.Close()
-	out := buf.Bytes()
 
-	dir := filepath.Dir(path)
-	if mkErr := os.MkdirAll(dir, 0o750); mkErr != nil {
-		return fmt.Errorf("creating config dir: %w", mkErr)
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return fmt.Errorf("creating config dir: %w", err)
 	}
 	tmp := path + ".tmp"
-	if writeErr := os.WriteFile(tmp, out, 0o600); writeErr != nil {
-		return fmt.Errorf("writing config: %w", writeErr)
+	if err := os.WriteFile(tmp, buf.Bytes(), 0o600); err != nil {
+		return fmt.Errorf("writing config: %w", err)
 	}
 	return os.Rename(tmp, path)
+}
+
+// ensureProfiles returns the profiles mapping node, creating it if absent.
+func ensureProfiles(root *yaml.Node) *yaml.Node {
+	profiles := mapValue(root, "profiles")
+	if profiles == nil || profiles.Kind != yaml.MappingNode {
+		profiles = &yaml.Node{Kind: yaml.MappingNode}
+		setMapValue(root, "profiles", profiles)
+	}
+	return profiles
+}
+
+// ensureDefaultProfile sets default_profile to name when it is not already set,
+// so a freshly created file round-trips.
+func ensureDefaultProfile(root *yaml.Node, name string) {
+	if mapValue(root, "default_profile") == nil {
+		setMapValue(root, "default_profile", &yaml.Node{
+			Kind: yaml.ScalarNode, Tag: "!!str", Value: name,
+		})
+	}
 }
 
 // mapValue returns the value node for key in a mapping node, or nil if absent.

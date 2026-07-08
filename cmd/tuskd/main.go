@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/fraser-isbester/tusk/internal/config"
+	"github.com/fraser-isbester/tusk/internal/connect"
 	"github.com/fraser-isbester/tusk/internal/db"
 	"github.com/fraser-isbester/tusk/internal/rules"
 )
@@ -52,7 +53,15 @@ func main() {
 				return fmt.Errorf("no rules configured in profile %q", profileName)
 			}
 
-			database, err := db.New(profile.ConnectionString())
+			// Establish any tunnel (e.g. kube-port-forward into a VPC) before
+			// connecting; the daemon needs the same reachability as the TUI.
+			dsn, closeTunnel, err := connect.Open(context.Background(), profile)
+			if err != nil {
+				return fmt.Errorf("establishing connection: %w", err)
+			}
+			defer func() { _ = closeTunnel() }()
+
+			database, err := db.New(dsn)
 			if err != nil {
 				return fmt.Errorf("connecting to database: %w", err)
 			}
