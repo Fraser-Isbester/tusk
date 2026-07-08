@@ -42,6 +42,12 @@ tusk 'postgres://user:pass@localhost:5432/mydb'
 tusk -P production
 ```
 
+**First run:** if no connection can be established — no config yet, an unknown
+profile (`tusk -P nope`), or an unreachable database — tusk drops into an
+interactive setup screen instead of erroring out. Enter a connection (or a
+tunnel, see below), and tusk validates it and optionally saves it as a profile
+so the next launch connects straight through.
+
 ## Daemon
 
 `tuskd` runs a profile's rules engine headlessly — the same rules, evaluation, and
@@ -141,6 +147,56 @@ profiles:
 **Transaction**: `pid`, `user`, `app`, `database`, `state`, `xact_duration`, `query_duration`, `query`, `lock_count`
 
 **Lock**: `blocked_pid`, `blocking_pid`, `blocked_user`, `blocking_user`, `blocked_app`, `blocking_app`, `lock_type`, `mode`, `wait_duration`
+
+## Connecting to remote / VPC databases
+
+Production and staging databases usually aren't reachable directly — they live
+inside a VPC. A profile's `connect:` block tells tusk how to reach them, and tusk
+establishes the tunnel itself (and tears it down on exit). This works for both
+`tusk` and the `tuskd` daemon.
+
+**Kubernetes port-forward** (e.g. Postgres in a GKE cluster) — tusk runs
+`kubectl port-forward` for you:
+
+```yaml
+profiles:
+  staging:
+    connect:
+      via: kube-port-forward
+      context: gke_myproject_us-central1_staging   # optional; omit for current context
+      namespace: databases
+      target: svc/postgres                         # svc/pod/deployment/statefulset
+      remote_port: 5432
+      # local_port: 0   # 0 = auto-pick a free port
+    user: readonly
+    database: appdb
+    sslmode: disable
+```
+
+**Arbitrary tunnel command** (`exec`) — the escape hatch for SSH bastions, the
+Cloud SQL Auth Proxy, or anything else. `{local_port}` is substituted with an
+auto-picked free port that tusk then connects to:
+
+```yaml
+profiles:
+  bastion:
+    connect:
+      via: exec
+      command: ["ssh", "-N", "-L", "{local_port}:db.internal:5432", "bastion.example.com"]
+    user: readonly
+    database: appdb
+  cloudsql:
+    connect:
+      via: exec
+      command: ["cloud-sql-proxy", "--port", "{local_port}", "myproj:us-central1:pg"]
+    user: readonly
+    database: appdb
+```
+
+For tunnel methods, credentials and the database name come from the profile
+fields (`user`/`password`/`database`/`sslmode`); host and port are supplied by
+the tunnel. The default method is `direct`, which uses `url`/fields as-is.
+`kubectl` / `cloud-sql-proxy` / `ssh` must be on your `PATH`.
 
 ## Views
 
