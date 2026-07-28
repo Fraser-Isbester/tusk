@@ -4,7 +4,7 @@ go 1.26.5
 
 require (
 	github.com/gdamore/tcell/v2 v2.13.9
-	github.com/google/cel-go v0.28.0
+	github.com/google/cel-go v0.29.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/onsi/ginkgo/v2 v2.28.3
 	github.com/onsi/gomega v1.40.0
