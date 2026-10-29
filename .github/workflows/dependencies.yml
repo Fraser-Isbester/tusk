@@ -1,0 +1,129 @@
+name: Dependencies
+
+# Drives each Dependabot PR to a release. The branch ruleset has Copilot review
+# every push (Lite effort, set in the repository's Copilot settings); its
+# review of the PR's current head enables auto-merge, which waits for CI. A CI
+# failure disables auto-merge and dispatches the dependency-fix agent, whose
+# push Copilot reviews again. A merged Go module update is tagged, which runs
+# CI's release job.
+#
+# Every write uses the automation App's token: GitHub starts no workflows from
+# GITHUB_TOKEN's merges, pushes or tags. Its secrets are in both the Actions
+# and Dependabot scopes, since events Dependabot starts only see the latter.
+
+on:
+  pull_request_review:
+    types: [submitted]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  pull_request_target:
+    types: [closed]
+
+permissions: {}
+
+jobs:
+  merge:
+    if: >-
+      github.event_name == 'pull_request_review'
+      && github.event.pull_request.user.login == 'dependabot[bot]'
+      && github.event.review.user.login == 'copilot-pull-request-reviewer[bot]'
+      && github.event.review.commit_id == github.event.pull_request.head.sha
+    runs-on: ubuntu-latest
+    steps:
+      - id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.AUTOMATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOMATION_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          # The merge itself runs as the App, and actions updates edit workflows.
+          permission-workflows: write
+
+      - name: Enable auto-merge
+        run: gh pr merge --auto --squash "$PR"
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PR: ${{ github.event.pull_request.html_url }}
+
+  fix:
+    if: >-
+      github.event_name == 'workflow_run'
+      && github.event.workflow_run.conclusion == 'failure'
+      && startsWith(github.event.workflow_run.head_branch, 'dependabot/')
+    runs-on: ubuntu-latest
+    steps:
+      - id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.AUTOMATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOMATION_APP_PRIVATE_KEY }}
+          permission-actions: write
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Hand the failure to the dependency-fix agent
+        run: |
+          set -euo pipefail
+          # Only a failure of the PR's current head; an older head's is stale.
+          pr=$(gh pr list -R "$REPO" --head "$BRANCH" --state open --author app/dependabot \
+            --json number,headRefOid --jq ".[] | select(.headRefOid == \"$SHA\") | .number")
+          [ -n "$pr" ] || { echo "no open Dependabot PR at $SHA on $BRANCH"; exit 0; }
+
+          # Two fix attempts, then a human: every commit not Dependabot's is one.
+          attempts=$(gh api "repos/$REPO/pulls/$pr/commits" --paginate \
+            --jq '.[] | select(.author.login != "dependabot[bot]") | .sha' | wc -l)
+          if [ "$attempts" -ge 2 ]; then
+            gh pr comment -R "$REPO" "$pr" --body "CI still fails after $attempts fix commits; this upgrade needs a human."
+            exit 0
+          fi
+
+          # The fix must be reviewed before it merges: Copilot's review of the
+          # new head enables auto-merge again.
+          if [ "$(gh pr view -R "$REPO" "$pr" --json autoMergeRequest --jq '.autoMergeRequest != null')" = true ]; then
+            gh pr merge -R "$REPO" "$pr" --disable-auto
+          fi
+          gh workflow run -R "$REPO" dependency-fix.lock.yml -f pr="$pr" -f branch="$BRANCH"
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+
+  release:
+    if: >-
+      github.event_name == 'pull_request_target'
+      && github.event.pull_request.merged
+      && github.event.pull_request.user.login == 'dependabot[bot]'
+      && startsWith(github.event.pull_request.head.ref, 'dependabot/go_modules/')
+    runs-on: ubuntu-latest
+    # One tag at a time, so two merges never compute the same version.
+    concurrency:
+      group: dependency-release
+      cancel-in-progress: false
+    steps:
+      - id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.AUTOMATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOMATION_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Tag the next patch version
+        run: |
+          set -euo pipefail
+          latest=$(gh api "repos/$REPO/tags" --paginate --jq '.[].name' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)
+          if [ -z "$latest" ]; then
+            next=v0.1.0
+          else
+            IFS=. read -r major minor patch <<<"${latest#v}"
+            next="v$major.$minor.$((patch + 1))"
+          fi
+          gh api "repos/$REPO/git/refs" -f ref="refs/tags/$next" -f sha="$SHA"
+          echo "Tagged $SHA as $next"
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.merge_commit_sha }}
