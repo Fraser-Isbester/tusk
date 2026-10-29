@@ -1,0 +1,37 @@
+version: 2
+
+# Version updates wait out a cooldown so a compromised release has time to be
+# caught upstream; security updates skip it. Each ecosystem's updates arrive as
+# one grouped PR, which the Dependencies workflow reviews, merges and releases.
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      go:
+        applies-to: version-updates
+        patterns: ["*"]
+      go-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # gh-aw's lock files are generated: `gh aw compile` pins their actions to
+    # its own version. Upgrade gh-aw and recompile instead.
+    exclude-paths:
+      - .github/workflows/*.lock.yml
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns: ["*"]
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
