@@ -1,12 +1,6 @@
 name: CI
 
-# push covers every branch in this repo (including Dependabot's) and release
-# tags. pull_request exists only for forks, whose branches never push here;
-# each job skips same-repo PR events so a branch's CI runs exactly once and the
-# Dependencies workflow (workflow_run on CI) never sees a duplicate failure.
-on:
-  push:
-  pull_request:
+on: push
 
 permissions:
   contents: read
@@ -14,7 +8,6 @@ permissions:
 jobs:
   lint:
     name: Lint
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -29,7 +22,6 @@ jobs:
     # The newest-Postgres leg keeps the plain "Test" check name that existing
     # branch rules and the Dependencies workflow already know.
     name: ${{ matrix.name }}
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -74,7 +66,6 @@ jobs:
 
   build:
     name: Build
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -87,7 +78,6 @@ jobs:
 
   vuln:
     name: Vulnerability Check
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -103,7 +93,6 @@ jobs:
 
   tidy:
     name: Module Tidy
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

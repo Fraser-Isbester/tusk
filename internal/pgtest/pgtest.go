@@ -82,6 +82,12 @@ func WithDatabase(dsn, database string) (string, error) {
 		return "", fmt.Errorf("%s must be a postgres:// URL", EnvDSN)
 	}
 	u.Path = "/" + database
+	// pgx lets dbname/database query parameters override the path, so a
+	// retained one would point the tests back at the original database.
+	q := u.Query()
+	q.Del("dbname")
+	q.Del("database")
+	u.RawQuery = q.Encode()
 	return u.String(), nil
 }
 
