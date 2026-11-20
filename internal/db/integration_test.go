@@ -493,17 +493,18 @@ var _ = Describe("DB against PostgreSQL", Label("integration"), Ordered, Continu
 
 			setup, _ := client("tusk_test_setup")
 			exec(setup, `CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
-				CREATE TABLE slow_marker (id int PRIMARY KEY); INSERT INTO slow_marker VALUES (1);
-				SELECT pg_stat_statements_reset()`)
+				CREATE TABLE slow_marker (id int PRIMARY KEY); INSERT INTO slow_marker VALUES (1)`)
 			DeferCleanup(func() {
 				_, _ = setup.Exec(context.Background(), "DROP EXTENSION IF EXISTS pg_stat_statements; DROP TABLE IF EXISTS slow_marker")
 			})
 
 			c, _ := client(pgtest.UniqueName("slow"))
+			// GetSlowQueries ranks cluster-wide, so the marker has to earn a top-50
+			// spot on its own (1.5s total). Deliberately no pg_stat_statements_reset():
+			// unfiltered it wipes every database's history on a shared server, and
+			// scoped to this fresh database it would be a no-op.
 			for range 3 {
-				// Slow enough to rank in the top 50 by total time even on a
-				// shared server; pg_stat_statements is cluster-wide.
-				exec(c, "SELECT pg_sleep(0.1) FROM slow_marker")
+				exec(c, "SELECT pg_sleep(0.5) FROM slow_marker")
 			}
 
 			Eventually(func() ([]db.SlowQuery, error) { return database.GetSlowQueries(ctx) }).

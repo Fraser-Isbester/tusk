@@ -42,14 +42,22 @@ var _ = Describe("formatSize", func() {
 })
 
 var _ = Describe("timeAgo", func() {
-	ago := func(d time.Duration) *time.Time { t := time.Now().Add(-d); return &t }
+	It("renders a nil time as never", func() {
+		Expect(timeAgo(nil)).To(Equal("never"))
+	})
+
+	// Entries carry offsets, not timestamps: Entry arguments are evaluated at
+	// tree construction, so a time.Now() there would age by however long the
+	// specs that run first take.
 	DescribeTable("renders relative times",
-		func(t *time.Time, want string) { Expect(timeAgo(t)).To(Equal(want)) },
-		Entry("never", nil, "never"),
-		Entry("seconds", ago(5*time.Second), "5s ago"),
-		Entry("minutes", ago(3*time.Minute+5*time.Second), "3m ago"),
-		Entry("hours", ago(5*time.Hour+time.Minute), "5h ago"),
-		Entry("days", ago(49*time.Hour), "2d ago"),
+		func(offset time.Duration, want string) {
+			t := time.Now().Add(-offset)
+			Expect(timeAgo(&t)).To(Equal(want))
+		},
+		Entry("seconds", 5*time.Second, "5s ago"),
+		Entry("minutes", 3*time.Minute+5*time.Second, "3m ago"),
+		Entry("hours", 5*time.Hour+time.Minute, "5h ago"),
+		Entry("days", 49*time.Hour, "2d ago"),
 	)
 })
 
