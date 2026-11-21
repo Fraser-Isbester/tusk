@@ -189,8 +189,11 @@ var _ = Describe("DB against PostgreSQL", Label("integration"), Ordered, Continu
 		It("excludes the backend running the monitoring query itself", func() {
 			qs, err := database.GetActiveQueries(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			// Our own backend would be the only one actively executing tusk's SQL.
+			// GetActiveQueries is cluster-wide, and the rules and tuskd suites run
+			// their own monitoring concurrently against their own databases. In
+			// this suite's database, our backend is the only one running tusk's SQL.
 			Expect(qs).NotTo(ContainElement(And(
+				HaveField("Database", tmp.Name),
 				HaveField("State", "active"),
 				HaveField("QueryText", ContainSubstring("AS blocked_by")),
 			)))

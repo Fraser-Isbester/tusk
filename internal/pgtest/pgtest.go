@@ -48,18 +48,23 @@ type TempDB struct {
 // CreateDatabase creates a fresh database on the server behind adminDSN.
 func CreateDatabase(ctx context.Context, adminDSN string) (*TempDB, error) {
 	name := UniqueName("tusk_test")
+	// Retarget first: a DSN we can't rewrite must fail before a database
+	// exists that nobody holds a handle to drop.
+	dsn, err := WithDatabase(adminDSN, name)
+	if err != nil {
+		return nil, err
+	}
 	conn, err := pgx.Connect(ctx, adminDSN)
 	if err != nil {
 		return nil, fmt.Errorf("connecting as admin: %w", err)
 	}
 	defer func() { _ = conn.Close(ctx) }()
 
-	if _, err := conn.Exec(ctx, "CREATE DATABASE "+name); err != nil {
+	// template0, not the default template1: a shared server's template1 may
+	// carry extensions (pg_stat_statements) or tables that break the specs'
+	// assumptions about an empty database.
+	if _, err := conn.Exec(ctx, "CREATE DATABASE "+name+" TEMPLATE template0"); err != nil {
 		return nil, fmt.Errorf("creating %s: %w", name, err)
-	}
-	dsn, err := WithDatabase(adminDSN, name)
-	if err != nil {
-		return nil, err
 	}
 	return &TempDB{Name: name, DSN: dsn, adminDSN: adminDSN}, nil
 }
