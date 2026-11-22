@@ -87,12 +87,19 @@ func (p Profile) DSN(host string, port int) string {
 	if sslmode == "" {
 		sslmode = "disable"
 	}
-	if p.Password != "" {
-		return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
-			url.PathEscape(user), url.PathEscape(p.Password), host, port, db, sslmode)
+	// url.URL escapes userinfo and path itself; hand-built strings missed
+	// ':' in the user and reserved characters in the database name.
+	u := url.URL{
+		Scheme:   "postgres",
+		User:     url.User(user),
+		Host:     fmt.Sprintf("%s:%d", host, port),
+		Path:     "/" + db,
+		RawQuery: "sslmode=" + url.QueryEscape(sslmode),
 	}
-	return fmt.Sprintf("postgres://%s@%s:%d/%s?sslmode=%s",
-		user, host, port, db, sslmode)
+	if p.Password != "" {
+		u.User = url.UserPassword(user, p.Password)
+	}
+	return u.String()
 }
 
 // configPath returns the default configuration file path (~/.config/tusk/config.yaml).

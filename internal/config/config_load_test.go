@@ -10,7 +10,6 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/fraser-isbester/tusk/internal/config"
-	"github.com/fraser-isbester/tusk/internal/knownbug"
 )
 
 var _ = Describe("Load", func() {
@@ -155,11 +154,11 @@ var _ = Describe("Profile.DSN", func() {
 		Entry("/ ? # % in password", "monitor", "a/b?c#d%e", "app"),
 		Entry("space and + in password", "monitor", "two words+plus", "app"),
 		Entry("special user", "svc@corp", "x", "app"),
+		Entry(": in user with a password", "team:svc", "x", "app"),
 	)
 
 	DescribeTable("round-trips identifiers without a password",
 		func(user, database string) {
-			knownbug.Skip("DSN only escapes user when a password is set and never escapes the database name")
 			cc, err := pgx.ParseConfig(config.Profile{User: user, Database: database}.DSN("h", 5432))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cc.User).To(Equal(user))
@@ -167,5 +166,6 @@ var _ = Describe("Profile.DSN", func() {
 		},
 		Entry("user with /", "team/svc", "app"),
 		Entry("database with ?", "monitor", "weird?db"),
+		Entry("user with :", "team:svc", "app"),
 	)
 })
