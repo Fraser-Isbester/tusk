@@ -250,7 +250,6 @@ var _ = Describe("DB against PostgreSQL", Label("integration"), Ordered, Continu
 		// transactionid itself or require the blocker's lock to be granted.
 		// So every other open writing transaction is reported as a blocker.
 		It("attributes the wait only to the transaction holding the row", func() {
-			knownbug.Skip("lock join ignores pg_locks.transactionid/granted; unrelated writers are reported as blockers (use pg_blocking_pids)")
 
 			holder, holderPID := client(pgtest.UniqueName("rowholder"))
 			bystander, bystanderPID := client(pgtest.UniqueName("bystander"))

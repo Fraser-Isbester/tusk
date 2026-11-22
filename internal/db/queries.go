@@ -46,15 +46,8 @@ SELECT
     a.query_start,
     COALESCE(a.query, ''),
     COALESCE(a.query_id, 0),
-    COALESCE((SELECT bl.pid FROM pg_locks blocked
-              JOIN pg_locks bl ON bl.locktype = blocked.locktype
-                AND bl.database IS NOT DISTINCT FROM blocked.database
-                AND bl.relation IS NOT DISTINCT FROM blocked.relation
-                AND bl.page IS NOT DISTINCT FROM blocked.page
-                AND bl.tuple IS NOT DISTINCT FROM blocked.tuple
-                AND bl.pid <> blocked.pid
-              WHERE blocked.pid = a.pid AND NOT blocked.granted
-              LIMIT 1), 0) AS blocked_by
+    COALESCE(CASE WHEN a.wait_event_type = 'Lock'
+                  THEN (pg_blocking_pids(a.pid))[1] END, 0) AS blocked_by
 FROM pg_stat_activity a
 WHERE a.pid <> pg_backend_pid()
 ORDER BY duration_sec DESC
@@ -146,12 +139,7 @@ SELECT blocked.pid, blocking.pid,
        COALESCE(EXTRACT(EPOCH FROM (now() - ba.query_start)), 0),
        COALESCE(left(ba.query, 200), ''), COALESCE(left(bka.query, 200), '')
 FROM pg_locks blocked
-JOIN pg_locks blocking ON blocking.locktype = blocked.locktype
-  AND blocking.database IS NOT DISTINCT FROM blocked.database
-  AND blocking.relation IS NOT DISTINCT FROM blocked.relation
-  AND blocking.page IS NOT DISTINCT FROM blocked.page
-  AND blocking.tuple IS NOT DISTINCT FROM blocked.tuple
-  AND blocking.pid <> blocked.pid
+CROSS JOIN LATERAL unnest(pg_blocking_pids(blocked.pid)) AS blocking(pid)
 JOIN pg_stat_activity ba ON ba.pid = blocked.pid
 JOIN pg_stat_activity bka ON bka.pid = blocking.pid
 WHERE NOT blocked.granted
