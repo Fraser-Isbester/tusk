@@ -154,6 +154,7 @@ var _ = Describe("Profile.DSN", func() {
 		Entry("/ ? # % in password", "monitor", "a/b?c#d%e", "app"),
 		Entry("space and + in password", "monitor", "two words+plus", "app"),
 		Entry("special user", "svc@corp", "x", "app"),
+		Entry(": in user with a password", "team:svc", "x", "app"),
 	)
 
 	DescribeTable("round-trips identifiers without a password",
@@ -165,5 +166,6 @@ var _ = Describe("Profile.DSN", func() {
 		},
 		Entry("user with /", "team/svc", "app"),
 		Entry("database with ?", "monitor", "weird?db"),
+		Entry("user with :", "team:svc", "app"),
 	)
 })
