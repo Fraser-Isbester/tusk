@@ -82,6 +82,22 @@ tasks:
     cmds:
       - go run github.com/onsi/ginkgo/v2/ginkgo -r --randomize-all --race ./...
 
+  test:integration:
+    desc: Run all tests including integration specs against the docker-compose Postgres (task db:up first)
+    env:
+      TUSK_TEST_DSN: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+      TUSK_TEST_REQUIRE_DB: "1"
+    cmds:
+      - go run github.com/onsi/ginkgo/v2/ginkgo -r --randomize-all --race ./...
+
+  test:known-bugs:
+    desc: Also run specs reproducing known, unfixed bugs (they fail until fixed)
+    env:
+      TUSK_TEST_DSN: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+      TUSK_KNOWN_BUGS: "1"
+    cmds:
+      - go run github.com/onsi/ginkgo/v2/ginkgo -r --race ./...
+
   test:verbose:
     desc: Run all tests with verbose output
     cmds:
