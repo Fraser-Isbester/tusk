@@ -87,9 +87,10 @@ func (p Profile) DSN(host string, port int) string {
 	if sslmode == "" {
 		sslmode = "disable"
 	}
+	user, db = url.PathEscape(user), url.PathEscape(db)
 	if p.Password != "" {
 		return fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s",
-			url.PathEscape(user), url.PathEscape(p.Password), host, port, db, sslmode)
+			user, url.PathEscape(p.Password), host, port, db, sslmode)
 	}
 	return fmt.Sprintf("postgres://%s@%s:%d/%s?sslmode=%s",
 		user, host, port, db, sslmode)
