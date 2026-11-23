@@ -158,17 +158,18 @@ func (s *ViolationStore) Recent() []Violation {
 	return result
 }
 
-// MarkActive updates the Active flag and appends a closed event for
-// violations whose PID is no longer present.
+// MarkActive closes active violations whose PID is no longer present and
+// appends a closed event. Closing is final: a closed violation is never
+// reactivated, since a PID that reappears may be a different backend, and a
+// fresh match records a new violation instead.
 func (s *ViolationStore) MarkActive(activePIDs map[int]bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	for i := range s.violations {
 		v := &s.violations[i]
-		wasActive := v.Active
-		v.Active = activePIDs[v.PID]
-		if wasActive && !v.Active {
+		if v.Active && !activePIDs[v.PID] {
+			v.Active = false
 			v.Events = append(v.Events, ViolationEvent{
 				Time:    time.Now(),
 				Kind:    EventClosed,

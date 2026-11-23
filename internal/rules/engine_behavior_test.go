@@ -164,12 +164,11 @@ var _ = Describe("Engine lifecycle", func() {
 	})
 
 	It("opens a new violation when a PID re-matches after its previous one closed", func() {
-		// MarkActive recomputes Active for every stored violation, closed ones
-		// included, so a closed violation is silently resurrected (no event)
-		// whenever its PID shows up again — including a recycled PID belonging to
-		// an unrelated backend — and gets a second "closed" event later.
-		knownbug.Skip("ViolationStore.MarkActive reactivates closed violations when their PID reappears")
-
+		// MarkActive used to recompute Active for every stored violation, closed
+		// ones included, so a closed violation was silently resurrected (no
+		// event) whenever its PID showed up again — including a recycled PID
+		// belonging to an unrelated backend — and got a second "closed" event
+		// later.
 		engine.UpdateRules([]rules.Rule{compile(rules.RuleConfig{
 			Name: "r", Resource: "query", When: "true", Action: "log", DryRun: true,
 		}, false)})
