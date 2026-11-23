@@ -61,7 +61,7 @@ SELECT
     n_live_tup,
     n_dead_tup,
     seq_scan,
-    idx_scan,
+    COALESCE(idx_scan, 0) AS idx_scan, -- NULL when the table has no indexes
     last_vacuum,
     last_autovacuum
 FROM pg_stat_user_tables
@@ -160,7 +160,7 @@ SELECT
     n_live_tup,
     n_dead_tup,
     seq_scan,
-    idx_scan,
+    COALESCE(idx_scan, 0) AS idx_scan, -- NULL when the table has no indexes
     last_vacuum,
     last_autovacuum,
     last_analyze

@@ -14,7 +14,6 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/fraser-isbester/tusk/internal/db"
-	"github.com/fraser-isbester/tusk/internal/knownbug"
 	"github.com/fraser-isbester/tusk/internal/pgtest"
 )
 
@@ -430,12 +429,10 @@ var _ = Describe("DB against PostgreSQL", Label("integration"), Ordered, Continu
 
 	Describe("tables without any index", func() {
 		// pg_stat_user_tables.idx_scan is NULL for a table with no indexes, and
-		// both queries scan it into an int64. One index-less table anywhere in
-		// the database makes GetTables fail outright (the :tables view renders
-		// nothing), and GetTableDetail fails for that table.
+		// both queries scan it into an int64. Unguarded, one index-less table
+		// anywhere in the database made GetTables fail outright (the :tables
+		// view rendered nothing), and GetTableDetail failed for that table.
 		It("are listed and described", func() {
-			knownbug.Skip("idx_scan is NULL for index-less tables; GetTables/GetTableDetail scan it into int64 and error")
-
 			setup, _ := client("tusk_test_setup")
 			exec(setup, "CREATE TABLE heap_only (x int)")
 			DeferCleanup(func() { _, _ = setup.Exec(context.Background(), "DROP TABLE IF EXISTS heap_only") })
