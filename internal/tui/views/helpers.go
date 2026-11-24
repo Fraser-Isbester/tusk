@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gdamore/tcell/v2"
 
@@ -77,13 +78,19 @@ func timeAgo(t *time.Time) string {
 
 // truncate shortens a string to maxLen, appending "..." if truncated.
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	// Count runes, not bytes: a byte cut can land inside a multi-byte
+	// character and hand tview invalid UTF-8.
+	if utf8.RuneCountInString(s) <= maxLen {
 		return s
 	}
-	if maxLen <= 3 {
-		return s[:maxLen]
+	if maxLen <= 0 {
+		return ""
 	}
-	return s[:maxLen-3] + "..."
+	r := []rune(s)
+	if maxLen <= 3 {
+		return string(r[:maxLen])
+	}
+	return string(r[:maxLen-3]) + "..."
 }
 
 // countStatements counts the number of SQL statements in a query string

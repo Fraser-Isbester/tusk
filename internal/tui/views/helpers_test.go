@@ -73,8 +73,14 @@ var _ = Describe("truncate", func() {
 		Entry("tiny limit has no room for ellipsis", "SELECT", 3, "SEL"),
 	)
 
+	DescribeTable("counts characters, not bytes",
+		func(s string, n int, want string) { Expect(truncate(s, n)).To(Equal(want)) },
+		Entry("multi-byte text that fits is kept whole", "café", 4, "café"),
+		Entry("cut lands between characters", "日本語のクエリ", 5, "日本..."),
+		Entry("tiny limit", "ünï", 2, "ün"),
+	)
+
 	It("never splits a multi-byte character", func() {
-		knownbug.Skip("truncate slices bytes, producing invalid UTF-8 for non-ASCII query text")
 		for n := 4; n < 16; n++ {
 			Expect(utf8.ValidString(truncate("SELECT 'café ünïcødé 日本語'", n))).To(BeTrue(), "n=%d", n)
 		}

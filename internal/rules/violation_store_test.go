@@ -30,13 +30,55 @@ var _ = Describe("ViolationStore", func() {
 		}
 	}
 
+	Describe("AppendEvents", func() {
+		sent := rules.ViolationEvent{Time: time.Now(), Kind: rules.EventSent, Message: "sent"}
+
+		It("lands on the right violation after the store's slice has grown", func() {
+			id, _ := store.RecordOrUpdate(makeViolation("target", 1), 0)
+			// Enough later violations to reallocate the backing array, which a
+			// pointer taken at record time would no longer point into.
+			for pid := 2; pid < 60; pid++ {
+				store.RecordOrUpdate(makeViolation("other", pid), 0)
+			}
+			Expect(store.AppendEvents(id, sent)).To(BeTrue())
+
+			var target rules.Violation
+			for _, v := range store.Recent() {
+				if v.RuleName == "target" {
+					target = v
+				}
+			}
+			Expect(target.Events).To(HaveLen(2))
+			Expect(target.LastEvent().Kind).To(Equal(rules.EventSent))
+		})
+
+		It("reports false once the violation was trimmed away", func() {
+			small := rules.NewViolationStore(5*time.Minute, 1)
+			id, _ := small.RecordOrUpdate(makeViolation("old", 1), 0)
+			small.RecordOrUpdate(makeViolation("new", 2), 0)
+			Expect(small.AppendEvents(id, sent)).To(BeFalse())
+			Expect(small.Recent()[0].Events).To(HaveLen(1))
+		})
+
+		It("does not change a copy Recent already returned", func() {
+			id, _ := store.RecordOrUpdate(makeViolation("r", 1), 0)
+			before := store.Recent()[0]
+			before.Events[0].Message = "edited by reader"
+			store.AppendEvents(id, sent)
+			Expect(before.Events).To(HaveLen(1))
+			Expect(store.Recent()[0].Events[0].Message).To(Equal("detected"))
+		})
+	})
+
 	Describe("RecordOrUpdate", func() {
 		It("records a new violation and allows action", func() {
 			v := makeViolation("slow-query", 100)
-			result, shouldAct := store.RecordOrUpdate(v, 0)
+			_, shouldAct := store.RecordOrUpdate(v, 0)
 			Expect(shouldAct).To(BeTrue())
-			Expect(result.RuleName).To(Equal("slow-query"))
-			Expect(result.PID).To(Equal(100))
+			recent := store.Recent()
+			Expect(recent).To(HaveLen(1))
+			Expect(recent[0].RuleName).To(Equal("slow-query"))
+			Expect(recent[0].PID).To(Equal(100))
 		})
 
 		It("returns an existing active violation on subsequent calls", func() {
@@ -44,7 +86,8 @@ var _ = Describe("ViolationStore", func() {
 			first, _ := store.RecordOrUpdate(v, 0)
 			second, shouldAct := store.RecordOrUpdate(v, 0)
 			Expect(shouldAct).To(BeTrue())
-			Expect(second).To(BeIdenticalTo(first))
+			Expect(second).To(Equal(first))
+			Expect(store.Recent()).To(HaveLen(1))
 		})
 
 		It("respects cooldown and suppresses duplicate actions", func() {
@@ -78,9 +121,9 @@ var _ = Describe("ViolationStore", func() {
 			Expect(act1).To(BeTrue())
 			Expect(act2).To(BeTrue())
 			Expect(act3).To(BeTrue())
-			Expect(r1.RuleName).To(Equal("rule-a"))
-			Expect(r2.RuleName).To(Equal("rule-b"))
-			Expect(r3.PID).To(Equal(200))
+			Expect(r2).NotTo(Equal(r1))
+			Expect(r3).NotTo(BeElementOf(r1, r2))
+			Expect(store.Recent()).To(HaveLen(3))
 		})
 
 		It("enforces maxSize by evicting oldest violations", func() {
