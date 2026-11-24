@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"slices"
 	"sync"
 	"time"
 
@@ -41,6 +42,11 @@ type Violation struct {
 	QuerySnap       *db.Query
 	TransactionSnap *db.Transaction
 	LockSnap        *db.Lock
+
+	// id identifies the violation inside its store. Callers append events by id
+	// rather than through a pointer into the store's slice, which Prune and the
+	// maxSize trim move out from under them.
+	id uint64
 }
 
 // LastEvent returns the most recent event, or a zero event if empty.
@@ -71,6 +77,7 @@ type ViolationStore struct {
 	lastAction map[violationKey]time.Time
 	ttl        time.Duration
 	maxSize    int
+	nextID     uint64
 }
 
 // NewViolationStore creates a new violation store.
@@ -82,10 +89,10 @@ func NewViolationStore(ttl time.Duration, maxSize int) *ViolationStore {
 	}
 }
 
-// RecordOrUpdate finds an existing active violation for the same rule+PID
-// and returns it for event appending, or creates a new one.
-// Returns the violation pointer and whether the action should fire (not in cooldown).
-func (s *ViolationStore) RecordOrUpdate(v Violation, cooldown time.Duration) (*Violation, bool) {
+// RecordOrUpdate finds an existing active violation for the same rule+PID,
+// or records v as a new one. It returns the violation's id, for AppendEvents,
+// and whether the action should fire (not in cooldown).
+func (s *ViolationStore) RecordOrUpdate(v Violation, cooldown time.Duration) (uint64, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -102,21 +109,58 @@ func (s *ViolationStore) RecordOrUpdate(v Violation, cooldown time.Duration) (*V
 			// Check cooldown
 			if last, ok := s.lastAction[key]; ok && cooldown > 0 {
 				if time.Since(last) < cooldown {
-					return existing, false
+					return existing.id, false
 				}
 			}
 			s.lastAction[key] = time.Now()
-			return existing, true
+			return existing.id, true
 		}
 	}
 
 	// New violation
+	s.nextID++
+	v.id = s.nextID
 	s.violations = append(s.violations, v)
 	if len(s.violations) > s.maxSize {
 		s.violations = s.violations[len(s.violations)-s.maxSize:]
 	}
 	s.lastAction[key] = time.Now()
-	return &s.violations[len(s.violations)-1], true
+	return v.id, true
+}
+
+// AppendEvents appends events to the violation with the given id. It reports
+// false when that violation is no longer stored (pruned or trimmed).
+func (s *ViolationStore) AppendEvents(id uint64, events ...ViolationEvent) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := len(s.violations) - 1; i >= 0; i-- {
+		if s.violations[i].id == id {
+			s.violations[i].Events = append(s.violations[i].Events, events...)
+			return true
+		}
+	}
+	return false
+}
+
+// latestID returns the id of the newest violation for rule+PID, active or not.
+func (s *ViolationStore) latestID(ruleName string, pid int) (uint64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := len(s.violations) - 1; i >= 0; i-- {
+		if v := &s.violations[i]; v.RuleName == ruleName && v.PID == pid {
+			return v.id, true
+		}
+	}
+	return 0, false
+}
+
+// snapshot copies v with its own Events, so a caller reading it never shares
+// a backing array the store keeps appending to.
+func snapshot(v Violation) Violation {
+	v.Events = slices.Clone(v.Events)
+	return v
 }
 
 // Prune removes violations whose last event is older than TTL.
@@ -152,7 +196,7 @@ func (s *ViolationStore) Recent() []Violation {
 	for i := len(s.violations) - 1; i >= 0; i-- {
 		v := s.violations[i]
 		if v.CreatedAt().After(cutoff) || v.LastEvent().Time.After(cutoff) {
-			result = append(result, v)
+			result = append(result, snapshot(v))
 		}
 	}
 	return result
@@ -191,7 +235,7 @@ func (s *ViolationStore) ViolatedPIDs() map[int]Violation {
 			continue
 		}
 		if _, exists := result[v.PID]; !exists {
-			result[v.PID] = v
+			result[v.PID] = snapshot(v)
 		}
 	}
 	return result

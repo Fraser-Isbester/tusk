@@ -9,7 +9,6 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/fraser-isbester/tusk/internal/db"
-	"github.com/fraser-isbester/tusk/internal/knownbug"
 	"github.com/fraser-isbester/tusk/internal/rules"
 )
 
@@ -210,10 +209,8 @@ var _ = Describe("Engine lifecycle", func() {
 	})
 
 	It("is safe to read violations while evaluating (run with -race)", func() {
-		// RecordOrUpdate/ManualAction return a pointer into the store's slice and
-		// the engine appends Events through it after releasing the store mutex,
-		// while the TUI reads RecentViolations from another goroutine.
-		knownbug.Skip("Engine appends to Violation.Events outside ViolationStore.mu; data race with RecentViolations")
+		// The engine appends Events while the TUI reads RecentViolations from
+		// another goroutine; every append has to hold the store's mutex.
 
 		engine.UpdateRules([]rules.Rule{compile(rules.RuleConfig{
 			Name: "r", Resource: "query", When: "true", Action: "log",

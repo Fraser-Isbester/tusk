@@ -115,7 +115,7 @@ func (e *Engine) recordViolation(ctx context.Context, rule *Rule, pid int, qSnap
 		},
 	}
 
-	existing, shouldAct := e.violations.RecordOrUpdate(v, rule.Cooldown)
+	id, shouldAct := e.violations.RecordOrUpdate(v, rule.Cooldown)
 
 	if !shouldAct {
 		// In cooldown — no action events to append
@@ -126,34 +126,34 @@ func (e *Engine) recordViolation(ctx context.Context, rule *Rule, pid int, qSnap
 	if rule.DryRun {
 		dryRunStr = " dry-run=true"
 	}
-	existing.Events = append(existing.Events, ViolationEvent{
+	events := []ViolationEvent{{
 		Time:    time.Now(),
 		Kind:    EventAction,
 		Message: fmt.Sprintf("triggering action `%s`%s", rule.Action.Name(), dryRunStr),
-	})
-
+	}}
 	if rule.Cooldown > 0 {
-		existing.Events = append(existing.Events, ViolationEvent{
+		events = append(events, ViolationEvent{
 			Time:    time.Now(),
 			Kind:    EventCooldown,
 			Message: fmt.Sprintf("cooldown %s", rule.Cooldown),
 		})
 	}
+	e.violations.AppendEvents(id, events...)
 
 	if rule.DryRun {
 		return
 	}
 
-	// Execute the action
+	// Execute outside the store lock: the action is a database round trip.
 	if err := rule.Action.Execute(ctx, e.database, pid); err != nil {
-		existing.Events = append(existing.Events, ViolationEvent{
+		e.violations.AppendEvents(id, ViolationEvent{
 			Time:    time.Now(),
 			Kind:    EventError,
 			Message: fmt.Sprintf("action failed: %s", err.Error()),
 		})
 		log.Printf("[rules] action %s failed for PID %d: %v", rule.Action.Name(), pid, err)
 	} else {
-		existing.Events = append(existing.Events, ViolationEvent{
+		e.violations.AppendEvents(id, ViolationEvent{
 			Time:    time.Now(),
 			Kind:    EventSent,
 			Message: fmt.Sprintf("executed %s on PID %d", rule.Action.Name(), pid),
@@ -178,33 +178,21 @@ func (e *Engine) ManualAction(ruleName string, pid int) string {
 		return fmt.Sprintf("rule %q not found", ruleName)
 	}
 
-	// Find the violation and append events
-	e.violations.mu.Lock()
-	var target *Violation
-	for i := len(e.violations.violations) - 1; i >= 0; i-- {
-		v := &e.violations.violations[i]
-		if v.RuleName == ruleName && v.PID == pid {
-			target = v
-			break
-		}
-	}
-	e.violations.mu.Unlock()
-
-	if target == nil {
+	id, ok := e.violations.latestID(ruleName, pid)
+	if !ok {
 		return "violation not found"
 	}
 
-	target.Events = append(target.Events, ViolationEvent{
+	e.violations.AppendEvents(id, ViolationEvent{
 		Time:    time.Now(),
 		Kind:    EventAction,
 		Message: fmt.Sprintf("manual trigger of `%s`", rule.Action.Name()),
 	})
 
-	ctx := context.Background()
-	err := rule.Action.Execute(ctx, e.database, pid)
+	err := rule.Action.Execute(context.Background(), e.database, pid)
 	if err != nil {
 		msg := fmt.Sprintf("action failed: %s", err.Error())
-		target.Events = append(target.Events, ViolationEvent{
+		e.violations.AppendEvents(id, ViolationEvent{
 			Time:    time.Now(),
 			Kind:    EventError,
 			Message: msg,
@@ -213,7 +201,7 @@ func (e *Engine) ManualAction(ruleName string, pid int) string {
 	}
 
 	msg := fmt.Sprintf("executed %s on PID %d", rule.Action.Name(), pid)
-	target.Events = append(target.Events, ViolationEvent{
+	e.violations.AppendEvents(id, ViolationEvent{
 		Time:    time.Now(),
 		Kind:    EventSent,
 		Message: msg,
