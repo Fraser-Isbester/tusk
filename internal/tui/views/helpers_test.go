@@ -13,7 +13,6 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/fraser-isbester/tusk/internal/db"
-	"github.com/fraser-isbester/tusk/internal/knownbug"
 	"github.com/fraser-isbester/tusk/internal/rules"
 )
 
@@ -147,13 +146,24 @@ var _ = Describe("highlightSQL", func() {
 	})
 
 	It("renders query text containing brackets verbatim", func() {
-		// The output is fed to tview with dynamic colors on, but query text is
-		// never tview.Escape'd: JSON/array literals like '["a"]' or '[red]' are
-		// parsed as style tags and vanish from the query/lock detail panes.
-		knownbug.Skip("query text is not tview-escaped; bracketed literals are swallowed as color tags")
-		for _, q := range []string{`SELECT '["a","b"]'::jsonb`, "SELECT '[red]'", "SELECT arr[1:2]"} {
+		// The output is fed to tview with dynamic colors on, so unescaped
+		// JSON/array literals like '["a"]' or '[red]' would parse as style tags.
+		for _, q := range []string{
+			`SELECT '["a","b"]'::jsonb`, "SELECT '[red]'", "SELECT arr[1:2]",
+			"SELECT x[red] FROM t", "SELECT '[a[' FROM t[-]", "/* [::b] */ SELECT [42]",
+			"SELECT [select] /* [red] */ [", "[[]]", "SELECT x[#5F87FF]",
+			`SELECT x[::b: "1`, // unclosed '[' that tview would pair with a color tag
+		} {
 			Expect(tview.TaggedStringWidth(highlightSQL(q))).To(Equal(utf8.RuneCountInString(q)), q)
 		}
+	})
+})
+
+var _ = Describe("highlightSQL with brackets", func() {
+	It("still colors the rest of a query that has bracketed literals", func() {
+		Expect(highlightSQL("SELECT arr[1:2] FROM t")).To(Equal(
+			"[#5F87FF]SELECT[-] arr[[#FFD700]1[-]:[#FFD700]2[-]] [#5F87FF]FROM[-] t"))
+		Expect(highlightSQL("SELECT '[red]'")).To(Equal("[#5F87FF]SELECT[-] [#00D700]'[red[]'[-]"))
 	})
 })
 

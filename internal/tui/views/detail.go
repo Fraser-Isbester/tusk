@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -59,45 +60,56 @@ func highlightSQL(sql string) string {
 	}
 	type replacement struct {
 		start, end int
-		text       string
+		tag        string
 	}
 	var repls []replacement
 	for _, m := range sqlCommentRe.FindAllStringIndex(sql, -1) {
 		if !overlaps(m[0], m[1]) {
 			regions = append(regions, region{m[0], m[1]})
-			repls = append(repls, replacement{m[0], m[1], "[#585858]" + sql[m[0]:m[1]] + "[-]"})
+			repls = append(repls, replacement{m[0], m[1], "[#585858]"})
 		}
 	}
 	for _, m := range sqlStringRe.FindAllStringIndex(sql, -1) {
 		if !overlaps(m[0], m[1]) {
 			regions = append(regions, region{m[0], m[1]})
-			repls = append(repls, replacement{m[0], m[1], "[#00D700]" + sql[m[0]:m[1]] + "[-]"})
+			repls = append(repls, replacement{m[0], m[1], "[#00D700]"})
 		}
 	}
 	for _, m := range sqlKeywordRe.FindAllStringIndex(sql, -1) {
 		if !overlaps(m[0], m[1]) {
 			regions = append(regions, region{m[0], m[1]})
-			repls = append(repls, replacement{m[0], m[1], "[#5F87FF]" + sql[m[0]:m[1]] + "[-]"})
+			repls = append(repls, replacement{m[0], m[1], "[#5F87FF]"})
 		}
 	}
 	for _, m := range sqlNumberRe.FindAllStringIndex(sql, -1) {
 		if !overlaps(m[0], m[1]) {
 			regions = append(regions, region{m[0], m[1]})
-			repls = append(repls, replacement{m[0], m[1], "[#FFD700]" + sql[m[0]:m[1]] + "[-]"})
+			repls = append(repls, replacement{m[0], m[1], "[#FFD700]"})
 		}
 	}
-	for i := 0; i < len(repls); i++ {
-		for j := i + 1; j < len(repls); j++ {
-			if repls[j].start > repls[i].start {
-				repls[i], repls[j] = repls[j], repls[i]
-			}
-		}
-	}
-	result := sql
+	sort.Slice(repls, func(i, j int) bool { return repls[i].start < repls[j].start })
+
+	// Every piece of query text is tview-escaped, so bracketed literals such
+	// as '[red]' or '["a"]' render verbatim instead of parsing as style tags.
+	var b strings.Builder
+	pos := 0
 	for _, r := range repls {
-		result = result[:r.start] + r.text + result[r.end:]
+		b.WriteString(tview.Escape(sql[pos:r.start]))
+		b.WriteString(r.tag)
+		b.WriteString(tview.Escape(sql[r.start:r.end]))
+		b.WriteString("[-]")
+		pos = r.end
 	}
-	return result
+	b.WriteString(tview.Escape(sql[pos:]))
+
+	// tview's tag parser can still pair an unclosed '[' in the text with one
+	// of our color tags (e.g. `x[::b "` before a highlighted number). When that
+	// happens the visible text shrinks; drop the colors rather than lose text.
+	plain := tview.Escape(sql)
+	if out := b.String(); tview.TaggedStringWidth(out) == tview.TaggedStringWidth(plain) {
+		return out
+	}
+	return plain
 }
 
 func mergeComments(query string) db.SQLComment {
@@ -608,7 +620,7 @@ func renderTxnQueriesTable(table *tview.Table, t db.Transaction, history *db.Que
 	if history == nil {
 		table.SetTitle(" Current Query ")
 		table.SetCell(1, 0, tview.NewTableCell("").SetTextColor(theme.ColorDim))
-		table.SetCell(1, 1, tview.NewTableCell(truncate(t.QueryText, 120)).SetTextColor(theme.ColorFg).SetExpansion(1))
+		table.SetCell(1, 1, tview.NewTableCell(tview.Escape(truncate(t.QueryText, 120))).SetTextColor(theme.ColorFg).SetExpansion(1))
 		return nil
 	}
 
@@ -616,7 +628,7 @@ func renderTxnQueriesTable(table *tview.Table, t db.Transaction, history *db.Que
 	if len(entries) == 0 {
 		table.SetTitle(" Current Query ")
 		table.SetCell(1, 0, tview.NewTableCell("").SetTextColor(theme.ColorDim))
-		table.SetCell(1, 1, tview.NewTableCell(truncate(t.QueryText, 120)).SetTextColor(theme.ColorFg).SetExpansion(1))
+		table.SetCell(1, 1, tview.NewTableCell(tview.Escape(truncate(t.QueryText, 120))).SetTextColor(theme.ColorFg).SetExpansion(1))
 		return nil
 	}
 
@@ -629,12 +641,8 @@ func renderTxnQueriesTable(table *tview.Table, t db.Transaction, history *db.Que
 		if i == len(entries)-1 {
 			color = theme.ColorLogo
 		}
-		queryPreview := e.Query
-		if len(queryPreview) > 120 {
-			queryPreview = queryPreview[:117] + "..."
-		}
 		table.SetCell(row, 0, tview.NewTableCell(ts).SetTextColor(theme.ColorDim))
-		table.SetCell(row, 1, tview.NewTableCell(queryPreview).SetTextColor(color).SetExpansion(1))
+		table.SetCell(row, 1, tview.NewTableCell(tview.Escape(truncate(e.Query, 120))).SetTextColor(color).SetExpansion(1))
 	}
 
 	if sel > 0 && sel < table.GetRowCount() {

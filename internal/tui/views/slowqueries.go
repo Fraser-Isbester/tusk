@@ -160,7 +160,9 @@ func (v *SlowQueries) render() {
 		for col, val := range values {
 			cell := tview.NewTableCell(val).SetTextColor(theme.ColorFg)
 			if col == 0 {
-				cell.SetExpansion(1)
+				// Query text goes through tview's tag parser; escape it so
+				// bracketed literals render verbatim.
+				cell.SetText(tview.Escape(val)).SetExpansion(1)
 			}
 			v.table.SetCell(row, col, cell)
 		}
