@@ -162,10 +162,39 @@ var _ = Describe("highlightSQL", func() {
 var _ = Describe("highlightSQL with brackets", func() {
 	It("still colors the rest of a query that has bracketed literals", func() {
 		Expect(highlightSQL("SELECT arr[1:2] FROM t")).To(Equal(
-			"[#5F87FF]SELECT[-] arr[[#FFD700]1[-]:[#FFD700]2[-]] [#5F87FF]FROM[-] t"))
-		Expect(highlightSQL("SELECT '[red]'")).To(Equal("[#5F87FF]SELECT[-] [#00D700]'[red[]'[-]"))
+			"[#5F87FF]SELECT[-] arr[[:][#FFD700]1[-]:[#FFD700]2[-]] [#5F87FF]FROM[-] t"))
+		Expect(highlightSQL("SELECT '[red]'")).To(Equal("[#5F87FF]SELECT[-] [#00D700]'[[:]red]'[-]"))
+	})
+
+	It("shows exactly the query's own text, whatever its brackets", func() {
+		for _, q := range bracketCorpus {
+			Expect(visibleText(highlightSQL(q))).To(Equal(q), q)
+		}
 	})
 })
+
+var _ = Describe("escapeTags", func() {
+	It("renders bracketed text verbatim, including URL and escaped-tag look-alikes", func() {
+		for _, q := range bracketCorpus {
+			Expect(visibleText(escapeTags(q))).To(Equal(q), q)
+		}
+	})
+})
+
+// bracketCorpus holds query text tview would otherwise read as tags: style,
+// URL and region tags, escaped-tag forms, and unclosed or nested brackets.
+var bracketCorpus = []string{
+	"SELECT '[red]'", `SELECT '["a","b"]'::jsonb`, "SELECT arr[1:2]",
+	"SELECT '[:::https://example.com]'", "SELECT '[::b:SELECT]'", `x[::b: "1`,
+	"SELECT '[a[]' FROM t", "[xx*/[][xSELECT", "[[red]]", "[[]]", "[", "]", "[]",
+	"SELECT x[#5F87FF] FROM t[-]", `SELECT '[""]'`, "/* [::b] */ SELECT [42]",
+	"SELECT '[日本]' -- [red]",
+}
+
+// visibleText is the text tview shows for tagged once it parses the tags.
+func visibleText(tagged string) string {
+	return tview.NewTextView().SetDynamicColors(true).SetText(tagged).GetText(true)
+}
 
 var _ = Describe("violationIcon", func() {
 	v := func(action string, kind rules.EventKind) rules.Violation {

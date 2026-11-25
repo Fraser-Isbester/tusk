@@ -89,27 +89,29 @@ func highlightSQL(sql string) string {
 	}
 	sort.Slice(repls, func(i, j int) bool { return repls[i].start < repls[j].start })
 
-	// Every piece of query text is tview-escaped, so bracketed literals such
-	// as '[red]' or '["a"]' render verbatim instead of parsing as style tags.
+	// Every piece of query text is escaped, so bracketed literals such as
+	// '[red]' or '["a"]' render verbatim instead of parsing as tags.
 	var b strings.Builder
 	pos := 0
 	for _, r := range repls {
-		b.WriteString(tview.Escape(sql[pos:r.start]))
+		b.WriteString(escapeTags(sql[pos:r.start]))
 		b.WriteString(r.tag)
-		b.WriteString(tview.Escape(sql[r.start:r.end]))
+		b.WriteString(escapeTags(sql[r.start:r.end]))
 		b.WriteString("[-]")
 		pos = r.end
 	}
-	b.WriteString(tview.Escape(sql[pos:]))
+	b.WriteString(escapeTags(sql[pos:]))
+	return b.String()
+}
 
-	// tview's tag parser can still pair an unclosed '[' in the text with one
-	// of our color tags (e.g. `x[::b "` before a highlighted number). When that
-	// happens the visible text shrinks; drop the colors rather than lose text.
-	plain := tview.Escape(sql)
-	if out := b.String(); tview.TaggedStringWidth(out) == tview.TaggedStringWidth(plain) {
-		return out
-	}
-	return plain
+// escapeTags makes s render verbatim wherever tview parses tags (dynamic-color
+// text views and table cells). Each '[' is followed by "[:]", a tag that sets
+// nothing: the '[' can't open a tag because the next byte is '[', and "[:]"
+// itself is consumed as a no-op. tview.Escape is not enough here: it only
+// covers style-tag characters, so URL tags like '[:::https://x]', and text
+// that already looks like an escaped tag, still lose characters.
+func escapeTags(s string) string {
+	return strings.ReplaceAll(s, "[", "[[:]")
 }
 
 func mergeComments(query string) db.SQLComment {
@@ -620,7 +622,7 @@ func renderTxnQueriesTable(table *tview.Table, t db.Transaction, history *db.Que
 	if history == nil {
 		table.SetTitle(" Current Query ")
 		table.SetCell(1, 0, tview.NewTableCell("").SetTextColor(theme.ColorDim))
-		table.SetCell(1, 1, tview.NewTableCell(tview.Escape(truncate(t.QueryText, 120))).SetTextColor(theme.ColorFg).SetExpansion(1))
+		table.SetCell(1, 1, tview.NewTableCell(escapeTags(truncate(t.QueryText, 120))).SetTextColor(theme.ColorFg).SetExpansion(1))
 		return nil
 	}
 
@@ -628,7 +630,7 @@ func renderTxnQueriesTable(table *tview.Table, t db.Transaction, history *db.Que
 	if len(entries) == 0 {
 		table.SetTitle(" Current Query ")
 		table.SetCell(1, 0, tview.NewTableCell("").SetTextColor(theme.ColorDim))
-		table.SetCell(1, 1, tview.NewTableCell(tview.Escape(truncate(t.QueryText, 120))).SetTextColor(theme.ColorFg).SetExpansion(1))
+		table.SetCell(1, 1, tview.NewTableCell(escapeTags(truncate(t.QueryText, 120))).SetTextColor(theme.ColorFg).SetExpansion(1))
 		return nil
 	}
 
@@ -642,7 +644,7 @@ func renderTxnQueriesTable(table *tview.Table, t db.Transaction, history *db.Que
 			color = theme.ColorLogo
 		}
 		table.SetCell(row, 0, tview.NewTableCell(ts).SetTextColor(theme.ColorDim))
-		table.SetCell(row, 1, tview.NewTableCell(tview.Escape(truncate(e.Query, 120))).SetTextColor(color).SetExpansion(1))
+		table.SetCell(row, 1, tview.NewTableCell(escapeTags(truncate(e.Query, 120))).SetTextColor(color).SetExpansion(1))
 	}
 
 	if sel > 0 && sel < table.GetRowCount() {
