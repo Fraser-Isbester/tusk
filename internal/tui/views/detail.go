@@ -11,6 +11,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"github.com/rivo/uniseg"
 
 	"github.com/fraser-isbester/tusk/internal/db"
 	"github.com/fraser-isbester/tusk/internal/rules"
@@ -48,9 +49,21 @@ var (
 )
 
 func highlightSQL(sql string) string {
+	// A color tag inside a grapheme (before a combining mark, between \r and
+	// \n) splits it, and tview then drops or repeats characters. Only color
+	// tokens that start and end on grapheme boundaries.
+	boundary := map[int]bool{0: true}
+	for g, off := uniseg.NewGraphemes(sql), 0; g.Next(); {
+		off += len(g.Str())
+		boundary[off] = true
+	}
+
 	type region struct{ start, end int }
 	var regions []region
 	overlaps := func(s, e int) bool {
+		if !boundary[s] || !boundary[e] {
+			return true // treat as taken, so the token stays uncolored
+		}
 		for _, r := range regions {
 			if s < r.end && e > r.start {
 				return true
@@ -105,13 +118,30 @@ func highlightSQL(sql string) string {
 }
 
 // escapeTags makes s render verbatim wherever tview parses tags (dynamic-color
-// text views and table cells). Each '[' is followed by "[:]", a tag that sets
-// nothing: the '[' can't open a tag because the next byte is '[', and "[:]"
-// itself is consumed as a no-op. tview.Escape is not enough here: it only
-// covers style-tag characters, so URL tags like '[:::https://x]', and text
-// that already looks like an escaped tag, still lose characters.
+// text views and table cells). Each grapheme that starts with '[' is followed
+// by "[:]", a tag that sets nothing: the '[' can't open a tag because the next
+// byte is '[', and "[:]" itself is consumed as a no-op. Stepping by grapheme,
+// as tview does, keeps a combining mark after '[' attached to it. tview.Escape
+// is not enough here: it only covers style-tag characters, so URL tags like
+// '[:::https://x]', and text that already looks like an escaped tag, still
+// lose characters.
 func escapeTags(s string) string {
-	return strings.ReplaceAll(s, "[", "[[:]")
+	if !strings.Contains(s, "[") {
+		return s
+	}
+	var (
+		b     strings.Builder
+		c     string
+		state = -1
+	)
+	for s != "" {
+		c, s, _, state = uniseg.StepString(s, state)
+		b.WriteString(c)
+		if c[0] == '[' { // tview only reads a tag from a grapheme starting with '['.
+			b.WriteString("[:]")
+		}
+	}
+	return b.String()
 }
 
 func mergeComments(query string) db.SQLComment {

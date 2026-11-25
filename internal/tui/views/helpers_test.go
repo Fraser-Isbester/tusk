@@ -188,7 +188,10 @@ var bracketCorpus = []string{
 	"SELECT '[:::https://example.com]'", "SELECT '[::b:SELECT]'", `x[::b: "1`,
 	"SELECT '[a[]' FROM t", "[xx*/[][xSELECT", "[[red]]", "[[]]", "[", "]", "[]",
 	"SELECT x[#5F87FF] FROM t[-]", `SELECT '[""]'`, "/* [::b] */ SELECT [42]",
-	"SELECT '[日本]' -- [red]",
+	"SELECT '[日本]' -- [red]", "SELECT '[\u0301]'", "SELECT '[\u0301red]'", "[*x[]", "[日x[]",
+	"SELECT '[e\u0301]'", "[👩\u200d💻]",
+	// Tokens that end inside a grapheme are left uncolored rather than split.
+	"SELECT ''\u0301", "SELECT\u0301 1", "-- note\r\nSELECT 1",
 }
 
 // visibleText is the text tview shows for tagged once it parses the tags.
