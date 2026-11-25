@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"github.com/rivo/uniseg"
 
 	"github.com/fraser-isbester/tusk/internal/db"
 	"github.com/fraser-isbester/tusk/internal/rules"
@@ -47,6 +49,16 @@ var (
 )
 
 func highlightSQL(sql string) string {
+	// A color tag inside a grapheme (before a combining mark, between \r and
+	// \n) splits it, and tview then drops or repeats characters. A token that
+	// starts or ends inside one still claims its region, so nothing inside it
+	// gets colored by a later pass, but it stays uncolored itself.
+	boundary := map[int]bool{0: true}
+	for g, off := uniseg.NewGraphemes(sql), 0; g.Next(); {
+		off += len(g.Str())
+		boundary[off] = true
+	}
+
 	type region struct{ start, end int }
 	var regions []region
 	overlaps := func(s, e int) bool {
@@ -59,45 +71,72 @@ func highlightSQL(sql string) string {
 	}
 	type replacement struct {
 		start, end int
-		text       string
+		tag        string
 	}
 	var repls []replacement
-	for _, m := range sqlCommentRe.FindAllStringIndex(sql, -1) {
-		if !overlaps(m[0], m[1]) {
-			regions = append(regions, region{m[0], m[1]})
-			repls = append(repls, replacement{m[0], m[1], "[#585858]" + sql[m[0]:m[1]] + "[-]"})
+	claim := func(m []int, tag string) {
+		if overlaps(m[0], m[1]) {
+			return
 		}
+		regions = append(regions, region{m[0], m[1]})
+		if boundary[m[0]] && boundary[m[1]] {
+			repls = append(repls, replacement{m[0], m[1], tag})
+		}
+	}
+	for _, m := range sqlCommentRe.FindAllStringIndex(sql, -1) {
+		claim(m, "[#585858]")
 	}
 	for _, m := range sqlStringRe.FindAllStringIndex(sql, -1) {
-		if !overlaps(m[0], m[1]) {
-			regions = append(regions, region{m[0], m[1]})
-			repls = append(repls, replacement{m[0], m[1], "[#00D700]" + sql[m[0]:m[1]] + "[-]"})
-		}
+		claim(m, "[#00D700]")
 	}
 	for _, m := range sqlKeywordRe.FindAllStringIndex(sql, -1) {
-		if !overlaps(m[0], m[1]) {
-			regions = append(regions, region{m[0], m[1]})
-			repls = append(repls, replacement{m[0], m[1], "[#5F87FF]" + sql[m[0]:m[1]] + "[-]"})
-		}
+		claim(m, "[#5F87FF]")
 	}
 	for _, m := range sqlNumberRe.FindAllStringIndex(sql, -1) {
-		if !overlaps(m[0], m[1]) {
-			regions = append(regions, region{m[0], m[1]})
-			repls = append(repls, replacement{m[0], m[1], "[#FFD700]" + sql[m[0]:m[1]] + "[-]"})
-		}
+		claim(m, "[#FFD700]")
 	}
-	for i := 0; i < len(repls); i++ {
-		for j := i + 1; j < len(repls); j++ {
-			if repls[j].start > repls[i].start {
-				repls[i], repls[j] = repls[j], repls[i]
-			}
-		}
-	}
-	result := sql
+	sort.Slice(repls, func(i, j int) bool { return repls[i].start < repls[j].start })
+
+	// Every piece of query text is escaped, so bracketed literals such as
+	// '[red]' or '["a"]' render verbatim instead of parsing as tags.
+	var b strings.Builder
+	pos := 0
 	for _, r := range repls {
-		result = result[:r.start] + r.text + result[r.end:]
+		b.WriteString(escapeTags(sql[pos:r.start]))
+		b.WriteString(r.tag)
+		b.WriteString(escapeTags(sql[r.start:r.end]))
+		b.WriteString("[-]")
+		pos = r.end
 	}
-	return result
+	b.WriteString(escapeTags(sql[pos:]))
+	return b.String()
+}
+
+// escapeTags makes s render verbatim wherever tview parses tags (dynamic-color
+// text views and table cells). Each grapheme that starts with '[' is followed
+// by "[:]", a tag that sets nothing: the '[' can't open a tag because the next
+// byte is '[', and "[:]" itself is consumed as a no-op. Stepping by grapheme,
+// as tview does, keeps a combining mark after '[' attached to it. tview.Escape
+// is not enough here: it only covers style-tag characters, so URL tags like
+// '[:::https://x]', and text that already looks like an escaped tag, still
+// lose characters.
+func escapeTags(s string) string {
+	if !strings.Contains(s, "[") {
+		return s
+	}
+	var (
+		b     strings.Builder
+		c     string
+		state = -1
+	)
+	for s != "" {
+		c, s, _, state = uniseg.StepString(s, state)
+		b.WriteString(c)
+		if c[0] == '[' { // tview only reads a tag from a grapheme starting with '['.
+			b.WriteString("[:]")
+		}
+	}
+	return b.String()
 }
 
 func mergeComments(query string) db.SQLComment {
@@ -608,7 +647,7 @@ func renderTxnQueriesTable(table *tview.Table, t db.Transaction, history *db.Que
 	if history == nil {
 		table.SetTitle(" Current Query ")
 		table.SetCell(1, 0, tview.NewTableCell("").SetTextColor(theme.ColorDim))
-		table.SetCell(1, 1, tview.NewTableCell(truncate(t.QueryText, 120)).SetTextColor(theme.ColorFg).SetExpansion(1))
+		table.SetCell(1, 1, tview.NewTableCell(escapeTags(truncate(t.QueryText, 120))).SetTextColor(theme.ColorFg).SetExpansion(1))
 		return nil
 	}
 
@@ -616,7 +655,7 @@ func renderTxnQueriesTable(table *tview.Table, t db.Transaction, history *db.Que
 	if len(entries) == 0 {
 		table.SetTitle(" Current Query ")
 		table.SetCell(1, 0, tview.NewTableCell("").SetTextColor(theme.ColorDim))
-		table.SetCell(1, 1, tview.NewTableCell(truncate(t.QueryText, 120)).SetTextColor(theme.ColorFg).SetExpansion(1))
+		table.SetCell(1, 1, tview.NewTableCell(escapeTags(truncate(t.QueryText, 120))).SetTextColor(theme.ColorFg).SetExpansion(1))
 		return nil
 	}
 
@@ -629,12 +668,8 @@ func renderTxnQueriesTable(table *tview.Table, t db.Transaction, history *db.Que
 		if i == len(entries)-1 {
 			color = theme.ColorLogo
 		}
-		queryPreview := e.Query
-		if len(queryPreview) > 120 {
-			queryPreview = queryPreview[:117] + "..."
-		}
 		table.SetCell(row, 0, tview.NewTableCell(ts).SetTextColor(theme.ColorDim))
-		table.SetCell(row, 1, tview.NewTableCell(queryPreview).SetTextColor(color).SetExpansion(1))
+		table.SetCell(row, 1, tview.NewTableCell(escapeTags(truncate(e.Query, 120))).SetTextColor(color).SetExpansion(1))
 	}
 
 	if sel > 0 && sel < table.GetRowCount() {
