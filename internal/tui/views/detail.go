@@ -50,8 +50,9 @@ var (
 
 func highlightSQL(sql string) string {
 	// A color tag inside a grapheme (before a combining mark, between \r and
-	// \n) splits it, and tview then drops or repeats characters. Only color
-	// tokens that start and end on grapheme boundaries.
+	// \n) splits it, and tview then drops or repeats characters. A token that
+	// starts or ends inside one still claims its region, so nothing inside it
+	// gets colored by a later pass, but it stays uncolored itself.
 	boundary := map[int]bool{0: true}
 	for g, off := uniseg.NewGraphemes(sql), 0; g.Next(); {
 		off += len(g.Str())
@@ -61,9 +62,6 @@ func highlightSQL(sql string) string {
 	type region struct{ start, end int }
 	var regions []region
 	overlaps := func(s, e int) bool {
-		if !boundary[s] || !boundary[e] {
-			return true // treat as taken, so the token stays uncolored
-		}
 		for _, r := range regions {
 			if s < r.end && e > r.start {
 				return true
@@ -76,29 +74,26 @@ func highlightSQL(sql string) string {
 		tag        string
 	}
 	var repls []replacement
-	for _, m := range sqlCommentRe.FindAllStringIndex(sql, -1) {
-		if !overlaps(m[0], m[1]) {
-			regions = append(regions, region{m[0], m[1]})
-			repls = append(repls, replacement{m[0], m[1], "[#585858]"})
+	claim := func(m []int, tag string) {
+		if overlaps(m[0], m[1]) {
+			return
 		}
+		regions = append(regions, region{m[0], m[1]})
+		if boundary[m[0]] && boundary[m[1]] {
+			repls = append(repls, replacement{m[0], m[1], tag})
+		}
+	}
+	for _, m := range sqlCommentRe.FindAllStringIndex(sql, -1) {
+		claim(m, "[#585858]")
 	}
 	for _, m := range sqlStringRe.FindAllStringIndex(sql, -1) {
-		if !overlaps(m[0], m[1]) {
-			regions = append(regions, region{m[0], m[1]})
-			repls = append(repls, replacement{m[0], m[1], "[#00D700]"})
-		}
+		claim(m, "[#00D700]")
 	}
 	for _, m := range sqlKeywordRe.FindAllStringIndex(sql, -1) {
-		if !overlaps(m[0], m[1]) {
-			regions = append(regions, region{m[0], m[1]})
-			repls = append(repls, replacement{m[0], m[1], "[#5F87FF]"})
-		}
+		claim(m, "[#5F87FF]")
 	}
 	for _, m := range sqlNumberRe.FindAllStringIndex(sql, -1) {
-		if !overlaps(m[0], m[1]) {
-			regions = append(regions, region{m[0], m[1]})
-			repls = append(repls, replacement{m[0], m[1], "[#FFD700]"})
-		}
+		claim(m, "[#FFD700]")
 	}
 	sort.Slice(repls, func(i, j int) bool { return repls[i].start < repls[j].start })
 

@@ -166,6 +166,14 @@ var _ = Describe("highlightSQL with brackets", func() {
 		Expect(highlightSQL("SELECT '[red]'")).To(Equal("[#5F87FF]SELECT[-] [#00D700]'[[:]red]'[-]"))
 	})
 
+	It("leaves a comment or literal it can't color whole, including its contents", func() {
+		// The comment ends between \r and \n, and the literal before a
+		// combining mark, so neither can take a tag; nothing inside them may.
+		Expect(highlightSQL("SELECT 1 -- 'x' 42\r\nSELECT 2")).To(Equal(
+			"[#5F87FF]SELECT[-] [#FFD700]1[-] -- 'x' 42\r\n[#5F87FF]SELECT[-] [#FFD700]2[-]"))
+		Expect(highlightSQL("SELECT 'a 1 FROM'\u0301")).To(Equal("[#5F87FF]SELECT[-] 'a 1 FROM'\u0301"))
+	})
+
 	It("shows exactly the query's own text, whatever its brackets", func() {
 		for _, q := range bracketCorpus {
 			Expect(visibleText(highlightSQL(q))).To(Equal(q), q)
